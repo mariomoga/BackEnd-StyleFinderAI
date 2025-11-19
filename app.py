@@ -1,26 +1,44 @@
 from flask import Flask
 from config import Config
+from utils import check_db_connection
+
+db_status = check_db_connection()
 
 app = Flask(__name__)
 app.config.from_object(Config)
 
 @app.route('/')
 def index():
-    return {'message': 'Welcome to StyleFinderAI API', 'status': 'running'}, 200
+    """Homepage che mostra lo stato della connessione al database."""
+    if db_status["connected"]:
+        return {
+            "message": "Welcome to StyleFinderAI API",
+            "status": "running",
+            "database": "connected"
+        }, 200
+    else:
+        return {
+            "message": "Welcome to StyleFinderAI API",
+            "status": "running",
+            "database": "disconnected",
+            "error": db_status["error"]
+        }, 500
 
-@app.route('/health')
-def health():
-    """Endpoint per verificare lo stato dell'applicazione e la connessione al database"""
+@app.route('/test')
+def test():
+    """Ritorna il contenuto della tabella users_prova_preferences."""
     try:
-        # Testa la connessione al database
         conn = Config.get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT 1')
+        cursor.execute("SELECT * FROM users_prova_preferences")
+        results = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
         cursor.close()
         conn.close()
-        return {'status': 'healthy', 'database': 'connected'}, 200
-    except Exception as e:
-        return {'status': 'unhealthy', 'database': 'disconnected', 'error': str(e)}, 500
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=8000)
+        data = [dict(zip(columns, row)) for row in results]
+
+        return {"data": data}, 200
+
+    except Exception as e:
+        return {"error": str(e)}, 500
