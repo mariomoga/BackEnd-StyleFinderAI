@@ -1,11 +1,12 @@
 from flask import Flask
-from config import Config
-from utils import check_db_connection
-
-db_status = check_db_connection()
-
+from db_manager import DBManager
 app = Flask(__name__)
-app.config.from_object(Config)
+app.config.from_object(DBManager)
+app.teardown_appcontext(DBManager.close_db_connection)
+
+with app.app_context():
+    DBManager.initialize_db_connection()
+    db_status = DBManager.check_db_connection()
 
 @app.route('/')
 def index():
@@ -28,13 +29,12 @@ def index():
 def test():
     """Ritorna il contenuto della tabella users_prova_preferences."""
     try:
-        conn = Config.get_db_connection()
+        conn = DBManager.get_db_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM users_prova_preferences")
         results = cursor.fetchall()
         columns = [desc[0] for desc in cursor.description]
         cursor.close()
-        conn.close()
 
         data = [dict(zip(columns, row)) for row in results]
 
