@@ -127,73 +127,7 @@ class DBManager:
         
         return []
 
-    @staticmethod
-    def set_session_token(user_id: int, session_token: str, session_expires):
-        """Aggiorna il token di sessione e la scadenza per l'utente.
 
-        Richiede che la tabella `users` abbia le colonne `session_token` (TEXT)
-        e `session_expires` (TIMESTAMP/TIMESTAMPTZ).
-        """
-        try:
-            conn = DBManager.get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE users SET session_token = %s WHERE id = %s",
-                (session_token, user_id)
-            )
-            conn.commit()
-            cursor.close()
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            raise
-
-    @staticmethod
-    def clear_session_token(user_id: int) -> bool:
-        """Imposta a NULL il session_token per l'utente indicato.
-
-        Ritorna True se l'utente esisteva ed è stato aggiornato, False altrimenti.
-        """
-        try:
-            conn = DBManager.get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "UPDATE users SET session_token = NULL WHERE id = %s",
-                (user_id,)
-            )
-            updated = cursor.rowcount > 0
-            conn.commit()
-            cursor.close()
-            return updated
-        except Exception:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            raise
-
-    @staticmethod
-    def get_user_by_session_token(session_token: str):
-        """Recupera utente dalla tabella `users` tramite session_token.
-
-        Ritorna dict {id, email} oppure None se non trovato.
-        """
-        try:
-            conn = DBManager.get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT id, email FROM users WHERE session_token = %s LIMIT 1",
-                (session_token,)
-            )
-            row = cursor.fetchone()
-            cursor.close()
-            if row:
-                return {"id": row[0], "email": row[1]}
-            return None
-        except Exception:
-            raise
 
     @staticmethod
     def update_user_credentials(user_id: int, new_email: str = None, new_password_hash: str = None) -> bool:
@@ -227,4 +161,25 @@ class DBManager:
                 conn.rollback()
             except Exception:
                 pass
+            raise
+
+    @staticmethod
+    def get_user_by_id(user_id: int):
+        """Recupera utente per id. Ritorna dict {id,email,password} oppure None.
+
+        Necessario per Flask-Login user_loader.
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, email, password FROM users WHERE id = %s LIMIT 1",
+                (user_id,)
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            if row:
+                return {"id": row[0], "email": row[1], "password": row[2]}
+            return None
+        except Exception:
             raise

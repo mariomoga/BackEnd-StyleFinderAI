@@ -1,11 +1,34 @@
 from flask import Flask, request
+from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
-import uuid
-from datetime import datetime, timedelta
 from db_manager import DBManager
+import os
+
 app = Flask(__name__)
 app.config.from_object(DBManager)
+app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 app.teardown_appcontext(DBManager.close_db_connection)
+
+# Flask-Login setup
+login_manager = LoginManager()
+login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+class AppUser(UserMixin):
+    def __init__(self, user_dict):
+        self.id = user_dict['id']
+        self.email = user_dict['email']
+        self._password_hash = user_dict.get('password')
+
+    def get_id(self):  # type: ignore[override]
+        return str(self.id)
+
+@login_manager.user_loader
+def load_user(user_id):
+    user = DBManager.get_user_by_id(int(user_id))
+    if user:
+        return AppUser(user)
+    return None
 
 with app.app_context():
     DBManager.initialize_db_connection()
@@ -103,91 +126,76 @@ def login():
         preferences = DBManager.get_user_preferences(user['id'])
         user_payload = {"id": user['id'], "email": user['email'], "preferences": preferences}
 
-        # Genera token di sessione senza scadenza e salva su DB
-        session_token = str(uuid.uuid4())
-        DBManager.set_session_token(user['id'], session_token, None)
+        # Autentica tramite Flask-Login (sessione cookie based)
+        login_user(AppUser(user))
 
         return {
             "success": True,
-            "session_token": session_token,
             "user": user_payload
         }, 200
 
     except Exception as e:
         return {"error": str(e)}, 500
 
-@app.route('/api/user/logout', methods=['POST'])
+@app.route('/api/user/logout', methods=['GET'])
 def logout():
     """Endpoint per logout utente.
 
-    Body JSON richiesto: {"id": <user_id>}.
-    Azzeramento del session_token. Risposte:
-      - 400 se id mancante
-      - 404 se utente non trovato
+    Non richiede parametri (usa sessione Flask-Login).
+    Risposte:
+      - 401 se non autenticato
       - 200 se successo {success: true}
     """
     try:
-        data = request.get_json() or {}
-        user_id = data.get('id')
-
-        if user_id is None:
-            return {"error": "ID utente mancante"}, 400
-
-        updated = DBManager.clear_session_token(user_id)
-        if not updated:
-            return {"error": "Utente non trovato"}, 404
-
+        if not current_user.is_authenticated:
+            return {"error": "Non autenticato"}, 401
+        logout_user()
+        
         return {"success": True}, 200
     except Exception as e:
         return {"error": str(e)}, 500
 
-@app.route('/api/user/session', methods=['POST'])
+@app.route('/api/user/session', methods=['GET'])
 def check_session():
-    """Verifica validità del session_token.
+    """Verifica validità della sessione Flask-Login.
 
-    Body JSON: {"session_token": "..."}
+    Non richiede parametri (usa cookie di sessione).
     Risposte:
-      - 400 se token mancante
-      - 404 se token non trovato
+      - 401 se sessione non valida
       - 200 se valido {success: true, user: {...}}
     """
     try:
-        data = request.get_json() or {}
-        token = data.get('session_token')
-
-        if not token:
-            return {"error": "Session token mancante"}, 400
-
-        user = DBManager.get_user_by_session_token(token)
-        if not user:
-            return {"error": "Sessione non valida"}, 404
-
-        preferences = DBManager.get_user_preferences(user['id'])
-        user_payload = {"id": user['id'], "email": user['email'], "preferences": preferences}
-
+        if not current_user.is_authenticated:
+            return {"error": "Sessione non valida"}, 401
+        # Recupero completo utente dal DB se servono preferenze
+        user_db = DBManager.get_user_by_id(int(current_user.get_id()))
+        preferences = DBManager.get_user_preferences(user_db['id']) if user_db else []
+        user_payload = {"id": user_db['id'], "email": user_db['email'], "preferences": preferences} if user_db else {}
         return {"success": True, "user": user_payload}, 200
     except Exception as e:
         return {"error": str(e)}, 500
 
 @app.route('/api/user/update', methods=['POST'])
 def update_user_credentials():
-    """Aggiorna email e/o password dell'utente.
+    """Aggiorna email e/o password dell'utente autenticato.
 
-    Body JSON: {"id": <int>, "email": "nuovaEmail"?, "password": "nuovaPassword"?}
+    Body JSON: {"email": "nuovaEmail"?, "password": "nuovaPassword"?}
     Almeno uno tra email o password deve essere presente.
+    Usa current_user per identificare l'utente.
     Errori:
-      - 400 dati mancanti / nessun campo
+      - 401 se non autenticato
+      - 400 se nessun campo da aggiornare
       - 404 utente non trovato
     Successo: {success: true}
     """
     try:
+        if not current_user.is_authenticated:
+            return {"error": "Non autenticato"}, 401
+
         data = request.get_json() or {}
-        user_id = data.get('id')
         new_email = data.get('email')
         new_password = data.get('password')
 
-        if user_id is None:
-            return {"error": "ID utente mancante"}, 400
         if not new_email and not new_password:
             return {"error": "Nessun campo da aggiornare"}, 400
 
@@ -195,6 +203,7 @@ def update_user_credentials():
         if new_password:
             password_hash = generate_password_hash(new_password)
 
+        user_id = int(current_user.get_id())
         updated = DBManager.update_user_credentials(user_id, new_email=new_email, new_password_hash=password_hash)
 
         if not updated:
