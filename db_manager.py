@@ -58,3 +58,173 @@ class DBManager:
         db = g.pop('db', None)
         if db is not None:
             db.close()
+
+    @staticmethod
+    def email_exists(email: str) -> bool:
+        """Controlla se un'email esiste nella tabella `users`."""
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM users WHERE email = %s LIMIT 1", (email,))
+            exists = cursor.fetchone() is not None
+            cursor.close()
+            return exists
+        except Exception:
+            # In caso di errore, rilancia per far gestire l'errore a chi chiama
+            raise
+
+    @staticmethod
+    def create_user(email: str, password_hash: str):
+        """Crea un nuovo utente nella tabella `users`.
+
+        Nota: la tabella `users` deve avere almeno le colonne `email` e `password`.
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (email, password) VALUES (%s, %s)",
+                (email, password_hash)
+            )
+            conn.commit()
+            cursor.close()
+        except Exception:
+            # Rollback in caso di errore e rilancia
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+
+    @staticmethod
+    def get_user_by_email(email: str):
+        """Recupera utente dalla tabella `users` per email.
+
+        Ritorna dict {id, email, password} oppure None.
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, email, password FROM users WHERE email = %s LIMIT 1",
+                (email,)
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            if row:
+                return {"id": row[0], "email": row[1], "password": row[2]}
+            return None
+        except Exception:
+            raise
+
+    @staticmethod
+    def get_user_preferences(user_id: int):
+        """Recupera le preferenze dell'utente dalla tabella `user_prova_preferences`.
+
+        Ritorna lista di dict con chiavi: favorite_color, favorite_brand, favorite_material, gender.
+        """
+        ###### DA FARE ########
+        
+        return []
+
+    @staticmethod
+    def set_session_token(user_id: int, session_token: str, session_expires):
+        """Aggiorna il token di sessione e la scadenza per l'utente.
+
+        Richiede che la tabella `users` abbia le colonne `session_token` (TEXT)
+        e `session_expires` (TIMESTAMP/TIMESTAMPTZ).
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET session_token = %s WHERE id = %s",
+                (session_token, user_id)
+            )
+            conn.commit()
+            cursor.close()
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+
+    @staticmethod
+    def clear_session_token(user_id: int) -> bool:
+        """Imposta a NULL il session_token per l'utente indicato.
+
+        Ritorna True se l'utente esisteva ed è stato aggiornato, False altrimenti.
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET session_token = NULL WHERE id = %s",
+                (user_id,)
+            )
+            updated = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+            return updated
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
+
+    @staticmethod
+    def get_user_by_session_token(session_token: str):
+        """Recupera utente dalla tabella `users` tramite session_token.
+
+        Ritorna dict {id, email} oppure None se non trovato.
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, email FROM users WHERE session_token = %s LIMIT 1",
+                (session_token,)
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            if row:
+                return {"id": row[0], "email": row[1]}
+            return None
+        except Exception:
+            raise
+
+    @staticmethod
+    def update_user_credentials(user_id: int, new_email: str = None, new_password_hash: str = None) -> bool:
+        """Aggiorna email e/o password dell'utente.
+
+        Si aspetta che la validazione dei campi da aggiornare sia fatta a livello di route.
+        Ritorna True se almeno una riga è stata aggiornata, False se nessuna (utente non trovato).
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            fields = []
+            params = []
+            if new_email is not None:
+                fields.append("email = %s")
+                params.append(new_email)
+            if new_password_hash is not None:
+                fields.append("password = %s")
+                params.append(new_password_hash)
+
+            # Assumiamo che almeno un campo sia presente (validato dalla route)
+            params.append(user_id)
+            query = f"UPDATE users SET {', '.join(fields)} WHERE id = %s"
+            cursor.execute(query, tuple(params))
+            updated = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+            return updated
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
