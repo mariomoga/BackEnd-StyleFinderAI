@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from flask import g
 from psycopg2 import extras
 from flask_login import current_user
+from psycopg2.extras import RealDictCursor
 
 # Carica le variabili d'ambiente dal file .env
 load_dotenv()
@@ -263,12 +264,84 @@ class DBManager:
                 conversations.append({
                     "id": row[0],
                     "title": row[1],
-                    "created_at": row[2].isoformat() if row[2] else None
+                    "created_at": row[2]
                 })
             return conversations
         except Exception:
             raise
 
+    @staticmethod
+    def get_chat_messages(user_id, conversation_id):
+        """
+        Recupera la cronologia chat. Per i messaggi dell'AI, ricostruisce l'array 'outfits'
+        con i dettagli completi (titolo, prezzo, immagine, ecc.) prendendoli dalla tabella product_data.
+        """
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor(cursor_factory=RealDictCursor)
+
+            query = """
+                    WITH chat_history AS (
+                        -- 1. MESSAGGI UTENTE (Prompts)
+                        SELECT
+                            p.id AS message_id,
+                            p.prompt AS text,
+                            NULL AS explanation,
+                            'user' AS role,
+                            p.created_at,
+                            '[]'::json AS outfits -- L'utente non ha outfit
+                        FROM prompts p
+                                 JOIN conversations c ON p.conversation_id = c.id
+                        WHERE p.conversation_id = %s AND c.user_id = %s
+
+                        UNION ALL
+
+                        -- 2. MESSAGGI AI (AI Responses)
+                        SELECT
+                            ar.id AS message_id,
+                            ar.short_message AS text,
+                            ar.explanation AS explanation,
+                            'ai' AS role,
+                            ar.created_at,
+                            COALESCE(
+                                    (
+                                        SELECT json_agg(
+                                                       json_build_object(
+                                                               'id', pd.id,
+                                                               'title', pd.title,
+                                                               'url', pd.url,
+                                                               'price', pd.price,
+                                                               'image_link', pd.image_link,
+                                                               'brand', pd.brand,
+                                                               'material', pd.material
+                                                       )
+                                               )
+                                        FROM outfit_suggestion os
+                                                 JOIN product_data pd ON os.product_id = pd.id
+                                        WHERE os.ai_response_id = ar.id
+                                    ),
+                                    '[]'::json
+                            ) AS outfits
+                        FROM ai_responses ar
+                                 JOIN conversations c ON ar.conversation_id = c.id
+                        WHERE ar.conversation_id = %s AND c.user_id = %s
+                    )
+
+                    -- 3. ORDINAMENTO FINALE
+                    SELECT * FROM chat_history
+                    ORDER BY created_at; \
+                    """
+
+            # Eseguiamo la query passando i parametri per entrambe le parti della UNION
+            cursor.execute(query, (conversation_id, user_id, conversation_id, user_id))
+
+            results = cursor.fetchall()
+            cursor.close()
+            return results
+
+        except Exception as e:
+            print(f"Errore recupero chat: {e}")
+            return []
 
     @staticmethod
     def create_conversation_with_message(user_id: int, title: str, message_text: str):
@@ -289,7 +362,7 @@ class DBManager:
             conversation_id = cursor.fetchone()[0]
 
             cursor.execute(
-                "INSERT INTO messages (conversation_id, text) VALUES (%s, %s)",
+                "INSERT INTO prompts (conversation_id, prompt) VALUES (%s, %s)",
                 (conversation_id, message_text)
             )
 
@@ -306,7 +379,62 @@ class DBManager:
             print(f"Errore durante la creazione della conversazione: {e}")
             return None
 
-    from flask_login import current_user
+    @staticmethod
+    def add_ai_response(conversation_id, response_data):
+        """
+        Salva la risposta dell'AI e i suggerimenti di outfit nel database.
+
+        Args:
+            conversation_id (int): L'ID della conversazione.
+            response_data (dict): Il dizionario contenente i dati della risposta (formato JSON).
+        """
+        conn = None
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+
+            # 1. Estrai i dati dal dizionario
+            short_message = response_data.get('message')
+            explanation = response_data.get('explanation')
+            outfit_items = response_data.get('outfit', [])
+            if not short_message or not explanation or len(outfit_items) == 0:
+                print(f"Empty values passed:\n {short_message}\n, {explanation}\n, {outfit_items}\n")
+                return -1
+
+            # 2. Inserisci la risposta nella tabella ai_responses
+            # Usiamo RETURNING id per ottenere l'ID generato auto-increment
+            insert_response_query = """
+                                    INSERT INTO ai_responses (conversation_id, short_message, explanation)
+                                    VALUES (%s, %s, %s)
+                                    RETURNING id; \
+                                    """
+            cursor.execute(insert_response_query, (conversation_id, short_message, explanation))
+            new_ai_response_id = cursor.fetchone()[0]
+
+            # 3. Gestisci i prodotti e i suggerimenti
+            for item in outfit_items:
+                product_id = item.get('id')
+
+                if not product_id:
+                    continue
+
+                # 3. Inserisci il collegamento in outfit_suggestion
+                insert_suggestion_query = """
+                                          INSERT INTO outfit_suggestion (ai_response_id, product_id)
+                                          VALUES (%s, %s); \
+                                          """
+                cursor.execute(insert_suggestion_query, (new_ai_response_id, product_id))
+
+            # Conferma le modifiche (Commit)
+            conn.commit()
+            cursor.close()
+            return new_ai_response_id
+
+        except psycopg2.Error as e:
+            if conn:
+                conn.rollback() # Annulla tutto se c'è un errore
+            print(f"Errore Database: {e}")
+            raise e
 
     @staticmethod
     def add_message_to_conversation(conversation_id: int, text: str):
@@ -336,7 +464,7 @@ class DBManager:
 
             # Altrimenti tutto bene!!
             cursor.execute(
-                "INSERT INTO messages (conversation_id, text) VALUES (%s, %s)",
+                "INSERT INTO prompts (conversation_id, prompt) VALUES (%s, %s)",
                 (conversation_id, text)
             )
 

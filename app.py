@@ -1,6 +1,8 @@
 from flask import Flask, request
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
+
+from ai_simulator import simulate_ai_outfit_generator
 from db_manager import DBManager
 import os
 import title_generator
@@ -228,6 +230,31 @@ def get_conversations():
     except Exception as e:
         return {"error": str(e)}, 500
 
+@app.route('/api/chat', methods=['GET'])
+@login_required
+def get_messages():
+    """Recupera tutte le conversazioni dell'utente autenticato.
+
+    Non richiede parametri nel body (usa current_user).
+    Risposte:
+      - 401 se non autenticato
+      - 200 con {success: true, conversations: [...]}
+    """
+    try:
+        data = request.get_json() or {}
+
+        user_id = int(current_user.get_id())
+        chat_id = data.get('chatId')
+
+        messages = DBManager.get_chat_messages(user_id, chat_id)
+        for message in messages:
+            if message.get("role") == "user":
+                del message['explanation'], message['outfits']
+
+        return messages, 200
+
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 @app.route('/api/messages/send', methods=['POST', 'PUT'])
 def send_message():
@@ -235,19 +262,24 @@ def send_message():
         data = request.get_json() or {}
         msg_text = data.get('message')
 
+        outfit = simulate_ai_outfit_generator(msg_text)
+
         if not current_user.is_authenticated:
-            return {"conv_title" : "Conversation not saved", "response" : "Message not saved"}, 200
+            return {"conv_title" : "A fantastic title", "content" : outfit}, 200
 
         if not data.get("chatId"):
             user_id = int(current_user.get_id())
             conv_tile = title_generator.generate_title(msg_text)
 
-            DBManager.create_conversation_with_message(user_id, conv_tile, msg_text)
-            return {"conv_title" : conv_tile, "response" : "Message saved"}, 200
+            conv_id = DBManager.create_conversation_with_message(user_id, conv_tile, msg_text)
+            DBManager.add_ai_response(conv_id, outfit)
+
+            return {"conv_id" : conv_id, "conv_title" : conv_tile, "content" : outfit}, 200
         else:
-            chat_id = data.get('chatId')
-            DBManager.add_message_to_conversation(chat_id, msg_text)
-            return {"response" : "Message saved"}, 200
+            conv_id = data.get('chatId')
+            DBManager.add_message_to_conversation(conv_id, msg_text)
+            DBManager.add_ai_response(conv_id, outfit)
+            return {"content" : outfit}, 200
 
 
     except Exception as e:
