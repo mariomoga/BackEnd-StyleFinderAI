@@ -1,3 +1,4 @@
+google-generativeai
 psycopg2-binary
 flask
 python-dotenv

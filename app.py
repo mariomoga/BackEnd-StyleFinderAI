@@ -1,8 +1,9 @@
 from flask import Flask, request
-from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user
+from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
 from db_manager import DBManager
 import os
+import title_generator
 
 app = Flask(__name__)
 app.config.from_object(DBManager)
@@ -50,24 +51,6 @@ def index():
             "database": "disconnected",
             "error": db_status["error"]
         }, 500
-
-@app.route('/test')
-def test():
-    """Ritorna il contenuto della tabella users_prova_preferences."""
-    try:
-        conn = DBManager.get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM users_prova_preferences")
-        results = cursor.fetchall()
-        columns = [desc[0] for desc in cursor.description]
-        cursor.close()
-
-        data = [dict(zip(columns, row)) for row in results]
-
-        return {"data": data}, 200
-
-    except Exception as e:
-        return {"error": str(e)}, 500
 
 
 @app.route('/api/user/', methods=['POST'])
@@ -138,6 +121,7 @@ def login():
         return {"error": str(e)}, 500
 
 @app.route('/api/user/logout', methods=['GET'])
+@login_required
 def logout():
     """Endpoint per logout utente.
 
@@ -147,8 +131,6 @@ def logout():
       - 200 se successo {success: true}
     """
     try:
-        if not current_user.is_authenticated:
-            return {"error": "Non autenticato"}, 401
         logout_user()
         
         return {"success": True}, 200
@@ -156,6 +138,7 @@ def logout():
         return {"error": str(e)}, 500
 
 @app.route('/api/user/session', methods=['GET'])
+@login_required
 def check_session():
     """Verifica validità della sessione Flask-Login.
 
@@ -165,8 +148,6 @@ def check_session():
       - 200 se valido {success: true, user: {...}}
     """
     try:
-        if not current_user.is_authenticated:
-            return {"error": "Sessione non valida"}, 401
         # Recupero completo utente dal DB se servono preferenze
         user_db = DBManager.get_user_by_id(int(current_user.get_id()))
         preferences = DBManager.get_user_preferences(user_db['id']) if user_db else []
@@ -176,6 +157,7 @@ def check_session():
         return {"error": str(e)}, 500
 
 @app.route('/api/user/update', methods=['POST'])
+@login_required
 def update_user_credentials():
     """Aggiorna email e/o password dell'utente autenticato.
 
@@ -189,9 +171,6 @@ def update_user_credentials():
     Successo: {success: true}
     """
     try:
-        if not current_user.is_authenticated:
-            return {"error": "Non autenticato"}, 401
-
         data = request.get_json() or {}
         new_email = data.get('email')
         new_password = data.get('password')
@@ -214,6 +193,113 @@ def update_user_credentials():
         return {"error": str(e)}, 500
 
 
-if __name__ == '__main__':
-    # Avvia l'app Flask
-    app.run(host='0.0.0.0', port=8000, debug=True)
+@app.route('/api/preferences', methods=['PUT', 'POST'])
+@login_required
+def update_user_preferences():
+    try:
+        data = request.get_json() or {}
+
+        user_id = int(current_user.get_id())
+        updated = DBManager.update_user_preferences(user_id, data)
+
+        if not updated:
+            return {"error": "Utente non trovato"}, 404
+
+        return {"success": True}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+@app.route('/api/conversations', methods=['GET'])
+@login_required
+def get_conversations():
+    """Recupera tutte le conversazioni dell'utente autenticato.
+
+    Non richiede parametri nel body (usa current_user).
+    Risposte:
+      - 401 se non autenticato
+      - 200 con {success: true, conversations: [...]}
+    """
+    try:
+        user_id = int(current_user.get_id())
+        conversations = DBManager.get_user_conversations(user_id)
+
+        return {"success": True, "conversations" : conversations}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+@app.route('/api/messages/send', methods=['POST', 'PUT'])
+def send_message():
+    try:
+        data = request.get_json() or {}
+        msg_text = data.get('message')
+
+        if not current_user.is_authenticated:
+            return {"conv_title" : "Conversation not saved", "response" : "Message not saved"}, 200
+
+        if not data.get("chatId"):
+            user_id = int(current_user.get_id())
+            conv_tile = title_generator.generate_title(msg_text)
+
+            DBManager.create_conversation_with_message(user_id, conv_tile, msg_text)
+            return {"conv_title" : conv_tile, "response" : "Message saved"}, 200
+        else:
+            chat_id = data.get('chatId')
+            DBManager.add_message_to_conversation(chat_id, msg_text)
+            return {"response" : "Message saved"}, 200
+
+
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+
+@app.route('/api/conversations/<int:conversation_id>', methods=['PUT', 'POST'])
+@login_required
+def rename_conversation(conversation_id):
+    """Rinomina una conversazione dell'utente autenticato.
+
+    Body JSON: {"title": "Nuovo titolo"}
+    Risposte:
+      - 401 se non autenticato
+      - 400 se manca il titolo
+      - 404 se conversazione non trovata o non appartiene all'utente
+      - 200 con {success: true}
+    """
+    try:
+        data = request.get_json() or {}
+        new_title = data.get('title')
+
+        if not new_title:
+            return {"error": "Titolo mancante"}, 400
+
+        user_id = int(current_user.get_id())
+        updated = DBManager.rename_conversation(user_id, conversation_id, new_title)
+
+        if not updated:
+            return {"error": "Conversazione non trovata"}, 404
+
+        return {"success": True}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+@app.route('/api/conversations/<int:conversation_id>', methods=['DELETE'])
+@login_required
+def delete_conversation(conversation_id):
+    """Elimina una conversazione dell'utente autenticato.
+
+    Risposte:
+      - 401 se non autenticato
+      - 404 se conversazione non trovata o non appartiene all'utente
+      - 200 con {success: true}
+    """
+    try:
+        user_id = int(current_user.get_id())
+        deleted = DBManager.delete_conversation(user_id, conversation_id)
+
+        if not deleted:
+            return {"error": "Conversazione non trovata"}, 404
+
+        return {"success": True}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
