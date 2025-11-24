@@ -7,6 +7,7 @@ from db_manager import DBManager
 
 def simulate_ai_outfit_generator(
         prompt: str,
+        image = None,
         num_items: int = 5,
         max_budget: float = 1000.0
 ) -> dict:
@@ -15,6 +16,7 @@ def simulate_ai_outfit_generator(
 
     Args:
         prompt: Il prompt dell'utente (non utilizzato nello stub)
+        image: the image
         num_items: Numero di item da includere nell'outfit (default: 5)
         max_budget: Budget massimo considerato (default: 1000.0)
 

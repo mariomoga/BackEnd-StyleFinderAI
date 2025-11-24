@@ -1,3 +1,5 @@
+import uuid
+
 from flask import Flask, request
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -6,6 +8,7 @@ from ai_simulator import simulate_ai_outfit_generator
 from db_manager import DBManager
 import os
 import title_generator
+from storage_manager import upload_image, get_image_url
 
 app = Flask(__name__)
 app.config.from_object(DBManager)
@@ -250,6 +253,11 @@ def get_messages():
         for message in messages:
             if message.get("role") == "user":
                 del message['explanation'], message['outfits']
+                if message['image_id']:
+                    message['image_id'] = get_image_url(message['image_id'])
+
+            if message.get("role") == "ai":
+                del message['image_id']
 
         return messages, 200
 
@@ -259,36 +267,54 @@ def get_messages():
 @app.route('/api/messages/send', methods=['POST', 'PUT'])
 def send_message():
     try:
-        data = request.get_json() or {}
-        msg_text = data.get('message')
+        if request.is_json:
+            data = request.get_json() or {}
+            msg_text = data.get('message')
+            conv_id = data.get('chatId')
+            image = None
+        else:
+            msg_text = request.form.get('message')
+            conv_id = request.form.get('chatId')
+            image = request.files.get('image')
 
-        outfit = simulate_ai_outfit_generator(msg_text)
+        outfit = simulate_ai_outfit_generator(msg_text, image=image)
 
         if not current_user.is_authenticated:
             return {"conv_title" : "A fantastic title", "content" : outfit}, 200
 
-        if not data.get("chatId"):
+        image_id = None
+        image_url = None
+        if image:
+            image_id = str(uuid.uuid4())
+            image_url = upload_image(image_id, image)
+
+        if not conv_id:
             user_id = int(current_user.get_id())
             conv_tile = title_generator.generate_title(msg_text)
 
-            conv_id = DBManager.create_conversation_with_message(user_id, conv_tile, msg_text)
+            conv_id = DBManager.create_conversation_with_message(user_id, conv_tile, msg_text, image_id=image_id)
+            if conv_id is None:
+                return {"error": "Error while creating a new conversation"}, 500
+
             DBManager.add_ai_response(conv_id, outfit)
 
-            return {"conv_id" : conv_id, "conv_title" : conv_tile, "content" : outfit}, 200
+            return {"conv_id" : conv_id, "conv_title" : conv_tile, "img_url" : image_url, "content" : outfit}, 200
         else:
-            conv_id = data.get('chatId')
-            DBManager.add_message_to_conversation(conv_id, msg_text)
+            success = DBManager.add_message_to_conversation(conv_id, msg_text, image_id=image_id)
+            if not success:
+                return {"error": "Unable to save the message (Not authorized or generic db error)"}, 403
+
             DBManager.add_ai_response(conv_id, outfit)
-            return {"content" : outfit}, 200
+            return {"img_url" : image_url, "content" : outfit}, 200
 
 
     except Exception as e:
         return {"error": str(e)}, 500
 
 
-@app.route('/api/conversations/<int:conversation_id>', methods=['PUT', 'POST'])
+@app.route('/api/conversations/rename', methods=['PUT', 'POST'])
 @login_required
-def rename_conversation(conversation_id):
+def rename_conversation():
     """Rinomina una conversazione dell'utente autenticato.
 
     Body JSON: {"title": "Nuovo titolo"}
@@ -301,6 +327,7 @@ def rename_conversation(conversation_id):
     try:
         data = request.get_json() or {}
         new_title = data.get('title')
+        conversation_id = data.get("chatId")
 
         if not new_title:
             return {"error": "Titolo mancante"}, 400
@@ -315,9 +342,9 @@ def rename_conversation(conversation_id):
     except Exception as e:
         return {"error": str(e)}, 500
 
-@app.route('/api/conversations/<int:conversation_id>', methods=['DELETE'])
+@app.route('/api/conversations/delete', methods=['DELETE'])
 @login_required
-def delete_conversation(conversation_id):
+def delete_conversation():
     """Elimina una conversazione dell'utente autenticato.
 
     Risposte:
@@ -326,7 +353,9 @@ def delete_conversation(conversation_id):
       - 200 con {success: true}
     """
     try:
+        data = request.get_json() or {}
         user_id = int(current_user.get_id())
+        conversation_id = int(data.get("chatId"))
         deleted = DBManager.delete_conversation(user_id, conversation_id)
 
         if not deleted:

@@ -6,6 +6,8 @@ from psycopg2 import extras
 from flask_login import current_user
 from psycopg2.extras import RealDictCursor
 
+from storage_manager import delete_images
+
 # Carica le variabili d'ambiente dal file .env
 load_dotenv()
 
@@ -289,7 +291,8 @@ class DBManager:
                             NULL AS explanation,
                             'user' AS role,
                             p.created_at,
-                            '[]'::json AS outfits -- L'utente non ha outfit
+                            '[]'::json AS outfits, -- L'utente non ha outfit
+                            p.image_id
                         FROM prompts p
                                  JOIN conversations c ON p.conversation_id = c.id
                         WHERE p.conversation_id = %s AND c.user_id = %s
@@ -321,7 +324,8 @@ class DBManager:
                                         WHERE os.ai_response_id = ar.id
                                     ),
                                     '[]'::json
-                            ) AS outfits
+                            ) AS outfits,
+                            NULL AS image_id
                         FROM ai_responses ar
                                  JOIN conversations c ON ar.conversation_id = c.id
                         WHERE ar.conversation_id = %s AND c.user_id = %s
@@ -344,7 +348,7 @@ class DBManager:
             return []
 
     @staticmethod
-    def create_conversation_with_message(user_id: int, title: str, message_text: str):
+    def create_conversation_with_message(user_id: int, title: str, message_text: str, image_id = None):
         """
         Crea una nuova conversazione per un utente e inserisce il primo messaggio.
 
@@ -362,8 +366,8 @@ class DBManager:
             conversation_id = cursor.fetchone()[0]
 
             cursor.execute(
-                "INSERT INTO prompts (conversation_id, prompt) VALUES (%s, %s)",
-                (conversation_id, message_text)
+                "INSERT INTO prompts (conversation_id, prompt, image_id) VALUES (%s, %s, %s)",
+                (conversation_id, message_text, image_id)
             )
 
             conn.commit()
@@ -437,7 +441,7 @@ class DBManager:
             raise e
 
     @staticmethod
-    def add_message_to_conversation(conversation_id: int, text: str):
+    def add_message_to_conversation(conversation_id: int, text: str, image_id=None):
         """
         Aggiunge un messaggio a una conversazione esistente, ma solo se
         la conversazione appartiene all'utente corrente.
@@ -464,8 +468,8 @@ class DBManager:
 
             # Altrimenti tutto bene!!
             cursor.execute(
-                "INSERT INTO prompts (conversation_id, prompt) VALUES (%s, %s)",
-                (conversation_id, text)
+                "INSERT INTO prompts (conversation_id, prompt, image_id) VALUES (%s, %s, %s)",
+                (conversation_id, text, image_id)
             )
 
             conn.commit()
@@ -480,23 +484,45 @@ class DBManager:
 
     @staticmethod
     def delete_conversation(user_id: int, conversation_id: int) -> bool:
-        """Elimina una conversazione dell'utente.
+        """Elimina una conversazione dell'utente e le relative immagini dallo storage.
 
         Ritorna True se eliminata, False se non trovata o non appartiene all'utente.
         """
+        conn = None
         try:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
+
+            cursor.execute(
+                """
+                SELECT p.image_id
+                FROM prompts p
+                         JOIN conversations c ON p.conversation_id = c.id
+                WHERE c.id = %s AND c.user_id = %s AND p.image_id IS NOT NULL
+                """,
+                (conversation_id, user_id)
+            )
+
+            images_to_delete = [str(row[0]) for row in cursor.fetchall()]
+
+            if images_to_delete:
+                delete_images(images_to_delete)
+
             cursor.execute(
                 "DELETE FROM conversations WHERE id = %s AND user_id = %s",
                 (conversation_id, user_id)
             )
+
             deleted = cursor.rowcount > 0
             conn.commit()
             cursor.close()
+
             return deleted
-        except Exception:
-            conn.rollback()
+
+        except Exception as e:
+            print(f"Errore durante la cancellazione della conversazione: {e}")
+            if conn:
+                conn.rollback()
             raise
 
     @staticmethod
