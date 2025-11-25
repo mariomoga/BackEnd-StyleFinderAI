@@ -52,7 +52,7 @@ def delete_images(images_id: list[str]):
         print(f"Errore while deleting Supabase: {e}")
         return False
 
-def compress_image(image_bytes: bytes, quality: int = 80, max_size: tuple = None) -> bytes:
+def compress_image(image_bytes: bytes, quality: int = 80) -> bytes:
     """
     Comprime un'immagine, la ridimensiona (opzionale) e la converte in JPEG.
 
