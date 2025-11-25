@@ -1,3 +1,4 @@
+import base64
 import uuid
 
 from flask import Flask, request
@@ -8,7 +9,7 @@ from ai_simulator import simulate_ai_outfit_generator
 from db_manager import DBManager
 import os
 import title_generator
-from storage_manager import upload_image, get_image_url
+from storage_manager import upload_image, get_image_url, compress_image
 
 app = Flask(__name__)
 app.config.from_object(DBManager)
@@ -247,7 +248,7 @@ def get_messages():
         data = request.get_json() or {}
 
         user_id = int(current_user.get_id())
-        chat_id = data.get('chatId')
+        chat_id = data.get('conv_id')
 
         messages = DBManager.get_chat_messages(user_id, chat_id)
         for message in messages:
@@ -270,17 +271,18 @@ def send_message():
         if request.is_json:
             data = request.get_json() or {}
             msg_text = data.get('message')
-            conv_id = data.get('chatId')
+            conv_id = data.get('conv_id')
             image = None
         else:
             msg_text = request.form.get('message')
-            conv_id = request.form.get('chatId')
-            image = request.files.get('image')
+            conv_id = request.form.get('conv_id')
+            image_uploaded = request.files.get('image')
+            image = compress_image(image_uploaded.read())
 
         outfit = simulate_ai_outfit_generator(msg_text, image=image)
 
         if not current_user.is_authenticated:
-            return {"conv_title" : "A fantastic title", "content" : outfit}, 200
+            return {"content" : outfit}, 200
 
         image_id = None
         image_url = None
@@ -327,7 +329,7 @@ def rename_conversation():
     try:
         data = request.get_json() or {}
         new_title = data.get('title')
-        conversation_id = data.get("chatId")
+        conversation_id = data.get("conv_id")
 
         if not new_title:
             return {"error": "Titolo mancante"}, 400
@@ -355,7 +357,7 @@ def delete_conversation():
     try:
         data = request.get_json() or {}
         user_id = int(current_user.get_id())
-        conversation_id = int(data.get("chatId"))
+        conversation_id = int(data.get("conv_id"))
         deleted = DBManager.delete_conversation(user_id, conversation_id)
 
         if not deleted:
