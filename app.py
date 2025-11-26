@@ -2,6 +2,7 @@ import base64
 import uuid
 
 from flask import Flask, request
+from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
 
@@ -14,6 +15,19 @@ from storage_manager import upload_image, get_image_url, compress_image
 app = Flask(__name__)
 app.config.from_object(DBManager)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+
+# CORS configuration for frontend
+CORS(app, 
+     origins=[
+         "http://localhost:5173", 
+         "http://localhost:5174",
+         "http://127.0.0.1:5173",
+         "http://127.0.0.1:5174"
+     ],
+     supports_credentials=True,
+     allow_headers=["Content-Type", "Authorization"],
+     methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
+
 app.teardown_appcontext(DBManager.close_db_connection)
 
 # Flask-Login setup

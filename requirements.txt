@@ -2,5 +2,7 @@ supabase
 google-generativeai
 psycopg2-binary
 flask
+flask-cors
 python-dotenv
 flask-login
+Pillow
