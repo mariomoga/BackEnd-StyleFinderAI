@@ -88,7 +88,7 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (name, email, password) VALUES (%s, %s)",
+                "INSERT INTO users (name, email, password) VALUES (%s, %s, %s)",
                 (name, email, password_hash)
             )
             conn.commit()
