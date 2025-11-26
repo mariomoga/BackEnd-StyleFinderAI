@@ -170,7 +170,7 @@ def check_session():
         # Recupero completo utente dal DB se servono preferenze
         user_db = DBManager.get_user_by_id(int(current_user.get_id()))
         preferences = DBManager.get_user_preferences(user_db['id']) if user_db else []
-        user_payload = {"id": user_db['id'], "email": user_db['email'], "preferences": preferences} if user_db else {}
+        user_payload = {"id": user_db['id'], "name": user_db['name'], "email": user_db['email'], "preferences": preferences} if user_db else {}
         return {"success": True, "user": user_payload}, 200
     except Exception as e:
         return {"error": str(e)}, 500
@@ -387,3 +387,7 @@ def preferences_all():
         return DBManager.preferences()
     except Exception as e:
         return {"error": str(e)}, 500
+
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8000, debug=True)
