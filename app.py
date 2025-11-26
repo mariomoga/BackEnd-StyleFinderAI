@@ -83,6 +83,7 @@ def signup():
     try:
         data = request.get_json() or {}
         email = data.get('email')
+        name = data.get('name')
         password = data.get('password')
 
         if not email or not password:
@@ -94,7 +95,7 @@ def signup():
 
         # Hash della password e creazione utente
         hashed = generate_password_hash(password)
-        DBManager.create_user(email, hashed)
+        DBManager.create_user(name, email, hashed)
 
         return {"success": True}, 201
 
@@ -120,14 +121,12 @@ def login():
             return {"error": "Credenziali mancanti"}, 400
 
         user = DBManager.get_user_by_email(email)
-        if not user:
-            return {"error": "Utente non trovato"}, 404
 
-        if not check_password_hash(user['password'], password):
-            return {"error": "Credenziali non valide"}, 401
+        if not user or not check_password_hash(user['password'], password):
+            return {"error": "Email or password not valid"}, 401
 
         preferences = DBManager.get_user_preferences(user['id'])
-        user_payload = {"id": user['id'], "email": user['email'], "preferences": preferences}
+        user_payload = {"id": user['id'], "name": user['name'], "email": user['email'], "preferences": preferences}
 
         # Autentica tramite Flask-Login (sessione cookie based)
         login_user(AppUser(user))

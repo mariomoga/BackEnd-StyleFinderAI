@@ -79,7 +79,7 @@ class DBManager:
             raise
 
     @staticmethod
-    def create_user(email: str, password_hash: str):
+    def create_user(name: str, email: str, password_hash: str):
         """Crea un nuovo utente nella tabella `users`.
 
         Nota: la tabella `users` deve avere almeno le colonne `email` e `password`.
@@ -88,8 +88,8 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO users (email, password) VALUES (%s, %s)",
-                (email, password_hash)
+                "INSERT INTO users (name, email, password) VALUES (%s, %s)",
+                (name, email, password_hash)
             )
             conn.commit()
             cursor.close()
@@ -108,13 +108,13 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, email, password FROM users WHERE email = %s LIMIT 1",
+                "SELECT id, name, email, password FROM users WHERE email = %s LIMIT 1",
                 (email,)
             )
             row = cursor.fetchone()
             cursor.close()
             if row:
-                return {"id": row[0], "email": row[1], "password": row[2]}
+                return {"id": row[0], "name" : row[1], "email": row[2], "password": row[3]}
             return None
         except Exception:
             raise
@@ -234,13 +234,13 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, email, password FROM users WHERE id = %s LIMIT 1",
+                "SELECT id, name, email, password FROM users WHERE id = %s LIMIT 1",
                 (user_id,)
             )
             row = cursor.fetchone()
             cursor.close()
             if row:
-                return {"id": row[0], "email": row[1], "password": row[2]}
+                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3]}
             return None
         except Exception:
             raise
