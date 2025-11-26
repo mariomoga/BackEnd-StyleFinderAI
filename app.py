@@ -379,3 +379,11 @@ def delete_conversation():
         return {"success": True}, 200
     except Exception as e:
         return {"error": str(e)}, 500
+
+@app.route('/api/preferences/all', methods=['GET'])
+@login_required
+def preferences_all():
+    try:
+        return DBManager.preferences()
+    except Exception as e:
+        return {"error": str(e)}, 500

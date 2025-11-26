@@ -545,3 +545,17 @@ class DBManager:
         except Exception:
             conn.rollback()
             raise
+
+    @staticmethod
+    def preferences():
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, name FROM preferences")
+            rows = cursor.fetchall()
+            preferences = {row[0]: row[1] for row in rows}
+
+            cursor.close()
+            return preferences
+        except Exception as e:
+            print("Errore durante il recupero delle preferenze")
