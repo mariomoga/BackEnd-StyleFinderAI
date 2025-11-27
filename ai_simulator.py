@@ -26,7 +26,7 @@ def simulate_ai_outfit_generator(
 
     # Query per recuperare prodotti casuali
     query = """
-            SELECT id, title, url, image_link, price
+            SELECT id, title, url, image_link, price, brand
             FROM product_data
             WHERE price IS NOT NULL
             ORDER BY RANDOM()
@@ -43,7 +43,7 @@ def simulate_ai_outfit_generator(
     total_cost = 0.0
 
     for product in products:
-        product_id, title, url, image_link, price = product
+        product_id, title, url, image_link, price, brand = product
         price_float = float(price) if isinstance(price, Decimal) else price
 
         outfit_item = {
@@ -52,7 +52,8 @@ def simulate_ai_outfit_generator(
             "id": str(product_id) if isinstance(product_id, uuid.UUID) else product_id,
             "similarity": round(random.uniform(0.25, 0.40), 4),
             "image_link": image_link,
-            "price": price_float
+            "price": price_float,
+            "brand": brand
         }
         outfit_items.append(outfit_item)
         total_cost += price_float

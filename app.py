@@ -317,7 +317,9 @@ def get_messages():
             if message.get("role") == "user":
                 del message['explanation'], message['outfits']
                 if message['image_id']:
-                    message['image_id'] = get_image_url(message['image_id'])
+                    # Construct the full file path expected by storage_manager
+                    file_path = f"public/{message['image_id']}.jpg"
+                    message['image_id'] = get_image_url(file_path)
 
             if message.get("role") == "ai":
                 del message['image_id']
