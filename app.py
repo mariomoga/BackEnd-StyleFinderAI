@@ -211,6 +211,55 @@ def update_user_credentials():
     except Exception as e:
         return {"error": str(e)}, 500
 
+# @app.route('/api/user/change-password', methods=['POST'])
+# @login_required
+# def change_password():
+#     """
+#     Endpoint per cambiare la password.
+#     Richiede JSON: { "current_password": "...", "new_password": "..." }
+#     """
+#     try:
+#         data = request.get_json() or {}
+#         current_password = data.get('current_password')
+#         new_password = data.get('new_password')
+#
+#         if not current_password or not new_password:
+#             return {"error": "Password mancante"}, 400
+#
+#         # Verifica la vecchia password
+#         user_db = DBManager.get_user_by_id(int(current_user.get_id()))
+#         if not user_db or not check_password_hash(user_db['password'], current_password):
+#             return {"error": "Password attuale non corretta"}, 401
+#
+#         # Aggiorna con la nuova password
+#         new_hash = generate_password_hash(new_password)
+#         DBManager.update_user_credentials(int(current_user.get_id()), new_password_hash=new_hash)
+#
+#         return {"success": True}, 200
+#     except Exception as e:
+#         return {"error": str(e)}, 500
+
+# @app.route('/api/user/profile', methods=['PUT'])
+# @login_required
+# def update_profile():
+#     """
+#     Endpoint per aggiornare il profilo (nome).
+#     Richiede JSON: { "name": "..." }
+#     """
+#     try:
+#         data = request.get_json() or {}
+#         new_name = data.get('name')
+#
+#         if not new_name:
+#             return {"error": "Nome mancante"}, 400
+#
+#         # Implementare DBManager.update_user_name o estendere update_user_credentials
+#         # DBManager.update_user_name(int(current_user.get_id()), new_name)
+#         
+#         return {"success": True}, 200
+#     except Exception as e:
+#         return {"error": str(e)}, 500
+
 
 @app.route('/api/preferences', methods=['PUT', 'POST'])
 @login_required
