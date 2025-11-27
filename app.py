@@ -211,6 +211,28 @@ def update_user_credentials():
     except Exception as e:
         return {"error": str(e)}, 500
 
+@app.route('/api/user/delete', methods=['DELETE'])
+@login_required
+def delete_account():
+    """Elimina l'account dell'utente autenticato.
+
+    Non richiede parametri nel body (usa current_user).
+    Risposte:
+      - 401 se non autenticato
+      - 200 con {success: true}
+    """
+    try:
+        user_id = int(current_user.get_id())
+        deleted = DBManager.delete_user(user_id)
+
+        if not deleted:
+            return {"error": "Utente non trovato"}, 404
+
+        logout_user()
+        return {"success": True}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
 # @app.route('/api/user/change-password', methods=['POST'])
 # @login_required
 # def change_password():

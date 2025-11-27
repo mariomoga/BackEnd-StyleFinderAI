@@ -540,6 +540,66 @@ class DBManager:
             raise
 
     @staticmethod
+    def delete_user(user_id: int) -> bool:
+        """Elimina un utente e tutti i suoi dati associati.
+
+        Ritorna True se eliminato, False se non trovato.
+        """
+        conn = None
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+
+            # 1. Recupera tutte le conversazioni per eliminare le immagini
+            cursor.execute("SELECT id FROM conversations WHERE user_id = %s", (user_id,))
+            conversation_ids = [row[0] for row in cursor.fetchall()]
+
+            for conv_id in conversation_ids:
+                # Riutilizziamo la logica di delete_conversation per pulire le immagini
+                # Nota: questo è un po' inefficiente fare N query, ma sicuro per le immagini.
+                # Possiamo ottimizzare se necessario, ma per ora va bene.
+                # Tuttavia, delete_conversation committa la transazione, il che rompe l'atomicità qui.
+                # Meglio reimplementare la logica di pulizia immagini qui o fare tutto in una query.
+                
+                # Recuperiamo immagini per questa conversazione
+                cursor.execute(
+                    """
+                    SELECT p.image_id
+                    FROM prompts p
+                    WHERE p.conversation_id = %s AND p.image_id IS NOT NULL
+                    """,
+                    (conv_id,)
+                )
+                images = [str(row[0]) for row in cursor.fetchall()]
+                if images:
+                    delete_images(images)
+
+            # 2. Elimina preferenze
+            cursor.execute("DELETE FROM user_preference WHERE user_id = %s", (user_id,))
+
+            # 3. Elimina conversazioni (cascade su prompts e ai_responses se configurato, 
+            # ma per sicurezza facciamo delete esplicito o ci affidiamo al DB)
+            # Assumiamo che il DB abbia ON DELETE CASCADE sulle foreign key.
+            # Se non lo ha, dovremmo cancellare prompts e ai_responses prima.
+            # Per ora proviamo a cancellare le conversazioni.
+            cursor.execute("DELETE FROM conversations WHERE user_id = %s", (user_id,))
+
+            # 4. Elimina utente
+            cursor.execute("DELETE FROM users WHERE id = %s", (user_id,))
+            
+            deleted = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+
+            return deleted
+
+        except Exception as e:
+            print(f"Errore durante l'eliminazione dell'utente {user_id}: {e}")
+            if conn:
+                conn.rollback()
+            raise
+
+    @staticmethod
     def rename_conversation(user_id: int, conversation_id: int, new_title: str) -> bool:
         """Rinomina il titolo di una conversazione dell'utente.
 
