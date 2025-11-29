@@ -55,6 +55,18 @@ class DBManager:
         return g.db
 
     @staticmethod
+    def get_raw_connection():
+        """Crea e restituisce una (nuova) connessione al database PostgreSQL """
+
+        return psycopg2.connect(
+            host=DBManager.DB_HOST,
+            port=DBManager.DB_PORT,
+            database=DBManager.DB_NAME,
+            user=DBManager.DB_USER,
+            password=DBManager.DB_PASSWORD
+        )
+
+    @staticmethod
     def check_db_connection():
         return DBManager._status
 
