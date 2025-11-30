@@ -1,3 +1,4 @@
+matplotlib
 supabase
 google-generativeai
 psycopg2-binary

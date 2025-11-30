@@ -318,7 +318,7 @@ def get_conversations():
     except Exception as e:
         return {"error": str(e)}, 500
 
-@app.route('/api/chat', methods=['GET', 'POST'])
+@app.route('/api/chat', methods=['GET'])
 @login_required
 def get_messages():
     """Recupera tutte le conversazioni dell'utente autenticato.
