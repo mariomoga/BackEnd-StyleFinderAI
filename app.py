@@ -1,16 +1,17 @@
 import base64
 import uuid
+from urllib.parse import urlparse
 
 from flask import Flask, request
 from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
 
-from ai_simulator import simulate_ai_outfit_generator
 from db_manager import DBManager
 import os
 import title_generator
-from storage_manager import upload_image, get_image_url, compress_image
+from src.ai.app import outfit_recommendation_handler
+from storage_manager import upload_image, compress_image, download_image
 
 app = Flask(__name__)
 app.config.from_object(DBManager)
@@ -335,16 +336,6 @@ def get_messages():
         chat_id = data.get('conv_id')
 
         messages = DBManager.get_chat_messages(user_id, chat_id)
-        for message in messages:
-            if message.get("role") == "user":
-                del message['explanation'], message['outfits']
-                if message['image_id']:
-                    # Construct the full file path expected by storage_manager
-                    file_path = f"public/{message['image_id']}.jpg"
-                    message['image_id'] = get_image_url(file_path)
-
-            if message.get("role") == "ai":
-                del message['image_id']
 
         return messages, 200
 
@@ -353,22 +344,19 @@ def get_messages():
 
 @app.route('/api/messages/send', methods=['POST', 'PUT'])
 def send_message():
+    user_id = current_user.get_id()
     try:
+        image = None
         if request.is_json:
             data = request.get_json() or {}
             msg_text = data.get('message')
             conv_id = data.get('conv_id')
-            image = None
         else:
             msg_text = request.form.get('message')
             conv_id = request.form.get('conv_id')
             image_uploaded = request.files.get('image')
-            image = compress_image(image_uploaded.read())
-
-        outfit = simulate_ai_outfit_generator(msg_text, image=image)
-
-        if not current_user.is_authenticated:
-            return {"content" : outfit}, 200
+            if image_uploaded:
+                image = compress_image(image_uploaded.read())
 
         image_id = None
         image_url = None
@@ -378,23 +366,92 @@ def send_message():
 
         if not conv_id:
             user_id = int(current_user.get_id())
-            conv_tile = title_generator.generate_title(msg_text)
+            conv_title = title_generator.generate_title(msg_text)
 
-            conv_id = DBManager.create_conversation_with_message(user_id, conv_tile, msg_text, image_id=image_id)
+            conv_id = DBManager.create_conversation_with_message(user_id, conv_title, msg_text, image_id=image_id)
             if conv_id is None:
                 return {"error": "Error while creating a new conversation"}, 500
 
-            DBManager.add_ai_response(conv_id, outfit)
-
-            return {"conv_id" : conv_id, "conv_title" : conv_tile, "img_url" : image_url, "content" : outfit}, 200
         else:
+            conv_title = None
             success = DBManager.add_message_to_conversation(conv_id, msg_text, image_id=image_id)
             if not success:
                 return {"error": "Unable to save the message (Not authorized or generic db error)"}, 403
 
-            DBManager.add_ai_response(conv_id, outfit)
-            return {"img_url" : image_url, "content" : outfit}, 200
+        messages = DBManager.get_chat_messages(user_id, conv_id)
+        messages.pop() # because is the current prompt
 
+        chat_history = []
+        past_images = dict()
+
+        for message in messages:
+            simple_message = {
+                "role" : message.get("role"),
+                "text" : message.get("text"),
+            }
+
+            if message.get("outfit"):
+                simple_message["outfit"] = message["outfit"]
+
+            raw_url = message.get("image_id")
+
+            if message.get("role") == "user" and raw_url:
+                try:
+                    parsed_path = urlparse(raw_url).path
+                    filename = os.path.basename(parsed_path)
+                    message_image_id = os.path.splitext(filename)[0]
+                    simple_message["image_id"] = message_image_id
+
+                    image_bytes = download_image(message_image_id)
+                    if image_bytes:
+                        past_images[message_image_id] = image_bytes
+                    else:
+                        print("Error while retrieving bytes from past images")
+
+                except Exception as e:
+                    print(e)
+
+            chat_history.append(simple_message)
+
+        image_data = None
+        if image_id:
+            image_data = (image_id, image)
+
+        print("========== DIO CANE =============")
+        print(chat_history)
+        print(past_images.keys())
+        print("=================================")
+
+        output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+        status = output.get('status')
+        if not status:
+            raise Exception("Error while generating recommendations")
+
+        if status == "AWAITING_INPUT" or status == "Guardrail":
+            text = output.get("prompt_to_user", output.get("message"))
+            DBManager.add_simple_ai_response(conv_id, text, status)
+        elif status == "COMPLETED":
+            text = output.get("message")
+            DBManager.add_ai_response(conv_id, output)
+        elif status == "RESOURCE_EXHAUSTED":
+            text = "Gemini resources exhausted"
+        else:
+            text = output.get("message")
+
+        response = {
+            "status" : status,
+            "conv_id": conv_id,
+            "img_url" : image_url,
+            "content" : {
+                "outfit" : output.get("outfit", []),
+                "message" : text,
+                "explanation": output.get("explanation"),
+            }
+        }
+        if conv_title:
+            response['conv_title'] = conv_title
+
+        return response, 200
 
     except Exception as e:
         return {"error": str(e)}, 500

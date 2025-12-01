@@ -35,6 +35,16 @@ def upload_image(filename, image: bytes):
         print(f"Errore upload Supabase: {e}")
         return None
 
+def download_image(image_id: str)->bytes | None:
+    file_path = f"public/{image_id}.jpg"
+
+    try:
+        return SUPABASE_CLIENT.storage.from_("images").download(file_path)
+
+    except Exception as e:
+        print(f"Errore upload Supabase: {e}")
+        return None
+
 
 def get_image_url(image_id: str) -> str:
     return SUPABASE_CLIENT.storage.from_("images").get_public_url(image_id)

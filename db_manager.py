@@ -6,7 +6,7 @@ from psycopg2 import extras
 from flask_login import current_user
 from psycopg2.extras import RealDictCursor
 
-from storage_manager import delete_images
+from storage_manager import delete_images, get_image_url
 
 # Carica le variabili d'ambiente dal file .env
 load_dotenv()
@@ -299,9 +299,9 @@ class DBManager:
             raise
 
     @staticmethod
-    def get_chat_messages(user_id, conversation_id):
+    def get_chat_messages(user_id, conversation_id)->list[dict]:
         """
-        Recupera la cronologia chat. Per i messaggi dell'AI, ricostruisce l'array 'outfits'
+        Recupera la cronologia chat. Per i messaggi dell'AI, ricostruisce l'array 'outfit'
         con i dettagli completi (titolo, prezzo, immagine, ecc.) prendendoli dalla tabella product_data.
         """
         try:
@@ -317,7 +317,7 @@ class DBManager:
                             NULL AS explanation,
                             'user' AS role,
                             p.created_at,
-                            '[]'::json AS outfits, -- L'utente non ha outfit
+                            '[]'::json AS outfit, -- L'utente non ha outfit
                             p.image_id
                         FROM prompts p
                                  JOIN conversations c ON p.conversation_id = c.id
@@ -330,7 +330,7 @@ class DBManager:
                             ar.id AS message_id,
                             ar.short_message AS text,
                             ar.explanation AS explanation,
-                            'ai' AS role,
+                            'model' AS role,
                             ar.created_at,
                             COALESCE(
                                     (
@@ -350,7 +350,7 @@ class DBManager:
                                         WHERE os.ai_response_id = ar.id
                                     ),
                                     '[]'::json
-                            ) AS outfits,
+                            ) AS outfit,
                             NULL AS image_id
                         FROM ai_responses ar
                                  JOIN conversations c ON ar.conversation_id = c.id
@@ -367,6 +367,17 @@ class DBManager:
 
             results = cursor.fetchall()
             cursor.close()
+
+            for message in results:
+                if message.get("role") == "user":
+                    del message['explanation'], message['outfit']
+                    if message['image_id']:
+                        file_path = f"public/{message['image_id']}.jpg"
+                        message['image_id'] = get_image_url(file_path)
+
+                if message.get("role") == "ai":
+                    del message['image_id']
+
             return results
 
         except Exception as e:
@@ -434,8 +445,8 @@ class DBManager:
             # 2. Inserisci la risposta nella tabella ai_responses
             # Usiamo RETURNING id per ottenere l'ID generato auto-increment
             insert_response_query = """
-                                    INSERT INTO ai_responses (conversation_id, short_message, explanation)
-                                    VALUES (%s, %s, %s)
+                                    INSERT INTO ai_responses (conversation_id, short_message, explanation, status)
+                                    VALUES (%s, %s, %s, 'COMPLETED')
                                     RETURNING id; \
                                     """
             cursor.execute(insert_response_query, (conversation_id, short_message, explanation))
@@ -465,6 +476,35 @@ class DBManager:
                 conn.rollback() # Annulla tutto se c'è un errore
             print(f"Errore Database: {e}")
             raise e
+
+    @staticmethod
+    def add_simple_ai_response(conversation_id, message, status):
+        conn = None
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+
+            # 2. Inserisci la risposta nella tabella ai_responses
+            # Usiamo RETURNING id per ottenere l'ID generato auto-increment
+            insert_response_query = """
+                                    INSERT INTO ai_responses (conversation_id, short_message, status)
+                                    VALUES (%s, %s, %s)
+                                    RETURNING id; \
+                                    """
+            cursor.execute(insert_response_query, (conversation_id, message, status))
+            new_ai_response_id = cursor.fetchone()[0]
+
+            # Conferma le modifiche (Commit)
+            conn.commit()
+            cursor.close()
+            return new_ai_response_id
+
+        except psycopg2.Error as e:
+            if conn:
+                conn.rollback() # Annulla tutto se c'è un errore
+            print(f"Errore Database: {e}")
+            raise e
+
 
     @staticmethod
     def add_message_to_conversation(conversation_id: int, text: str, image_id=None):
