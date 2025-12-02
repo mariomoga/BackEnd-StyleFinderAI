@@ -10,7 +10,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from db_manager import DBManager
 import os
 import title_generator
-from smartapp.src.ai.app import outfit_recommendation_handler
+from ai.src.app import outfit_recommendation_handler
 from storage_manager import upload_image, compress_image, download_image
 
 app = Flask(__name__)
