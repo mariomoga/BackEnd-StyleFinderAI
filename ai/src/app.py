@@ -44,7 +44,7 @@ except Exception as e:
 
 # 2. Gemini Client Initialization
 try:
-    GEMINI_CLIENT = genai.Client()
+    GEMINI_CLIENT = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
     logging.info("✅ Gemini client initialized successfully.")
 except Exception as e:
     # Handle Gemini client initialization failure: Critical, must stop.

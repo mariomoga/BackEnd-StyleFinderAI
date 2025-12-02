@@ -40,7 +40,7 @@ except Exception as e:
 # Initialize the Gemini Client ONCE
 # This client object will be reused for every API call.
 try:
-    GEMINI_CLIENT = genai.Client()
+    GEMINI_CLIENT = genai.Client(api_key=os.environ.get("GEMINI_API_KEY"))
 except Exception as e:
     print(f"Error initializing Gemini client: {e}")
     # In a real app, you'd handle this more gracefully (e.g., logging and returning a 500 error)
