@@ -1,6 +1,6 @@
 import os
 import logging
-from google import genai
+import google.generativeai as genai
 import torch
 from supabase import create_client, Client
 from transformers import CLIPProcessor, CLIPModel
@@ -10,13 +10,13 @@ from dotenv import load_dotenv
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Import custom modules
-from smartapp.src.ai.preferences_management import get_user_preferences
-from smartapp.src.ai.constraints_management import get_user_constraints
-from smartapp.src.ai.query_handler import generate_outfit_plan, parse_outfit_plan
-from smartapp.src.ai.query_embedder import get_text_embedding_vector
-from smartapp.src.ai.outfit_retrieval_logic import search_product_candidates_with_vector_db
-from smartapp.src.ai.assemble_outfit import get_outfit, select_final_outfit_and_metrics
-from smartapp.src.ai.get_explanations import explain_selected_outfit
+from ai.src.preferences_management import get_user_preferences
+from ai.src.constraints_management import get_user_constraints
+from ai.src.query_handler import generate_outfit_plan, parse_outfit_plan
+from ai.src.query_embedder import get_text_embedding_vector
+from ai.src.outfit_retrieval_logic import search_product_candidates_with_vector_db
+from ai.src.assemble_outfit import get_outfit, select_final_outfit_and_metrics
+from ai.src.get_explanations import explain_selected_outfit
 
 # --- 1. Global Initialization (Loaded only ONCE when the server starts) ---
 
