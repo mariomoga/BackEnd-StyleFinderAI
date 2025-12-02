@@ -680,12 +680,42 @@ class DBManager:
     def preferences():
         try:
             conn = DBManager.get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, name FROM preferences")
-            rows = cursor.fetchall()
-            preferences = {row[0]: row[1] for row in rows}
+            # Usa un cursore dizionario se disponibile (es. psycopg2.extras.RealDictCursor)
+            # altrimenti usa quello standard
+            with conn.cursor() as cursor:
 
-            cursor.close()
-            return preferences
+                # 1. Recupera le preferenze base
+                cursor.execute("SELECT id, name FROM preferences")
+                rows = cursor.fetchall()
+
+                # 2. Struttura base uniforme per tutti gli elementi
+                # Ogni elemento sarà un dizionario con "name" e "values" (anche se vuoto)
+                preferences = {}
+                for row in rows:
+                    pref_id = row[0]
+                    pref_name = row[1]
+                    preferences[pref_id] = {
+                        "name": pref_name,
+                        "values": []
+                    }
+
+                for pref_id, pref_data in preferences.items():
+                    match int(pref_id):
+                        case 2: # Brand
+                            cursor.execute("SELECT brand FROM product_data GROUP BY brand")
+                            brands = [row[0] for row in cursor.fetchall()]
+                            pref_data["values"] = brands
+
+                        case 3: # Materiali
+                            cursor.execute("SELECT name FROM materials")
+                            materials = [row[0] for row in cursor.fetchall()]
+                            pref_data["values"] = materials
+
+                        case 4: # Genere
+                            pref_data["values"] = ["male", "female", "non-binary"]
+
+                return preferences
+
         except Exception as e:
-            print("Errore durante il recupero delle preferenze")
+            print(f"Errore durante il recupero delle preferenze: {e}")
+            return {}
