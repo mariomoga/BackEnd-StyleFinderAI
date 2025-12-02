@@ -12,10 +12,12 @@ import os
 import title_generator
 from smartapp.src.ai.app import outfit_recommendation_handler
 from storage_manager import upload_image, compress_image, download_image
+from cachetools import LRUCache
 
 app = Flask(__name__)
 app.config.from_object(DBManager)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
+cache = LRUCache(maxsize=100)
 
 # CORS configuration for frontend
 CORS(app, 
@@ -35,6 +37,8 @@ app.teardown_appcontext(DBManager.close_db_connection)
 login_manager = LoginManager()
 login_manager.init_app(app)
 login_manager.login_view = 'login'
+
+not_auth_convs = {}
 
 class AppUser(UserMixin):
     def __init__(self, user_dict):
@@ -234,54 +238,54 @@ def delete_account():
     except Exception as e:
         return {"error": str(e)}, 500
 
-# @app.route('/api/user/change-password', methods=['POST'])
-# @login_required
-# def change_password():
-#     """
-#     Endpoint per cambiare la password.
-#     Richiede JSON: { "current_password": "...", "new_password": "..." }
-#     """
-#     try:
-#         data = request.get_json() or {}
-#         current_password = data.get('current_password')
-#         new_password = data.get('new_password')
-#
-#         if not current_password or not new_password:
-#             return {"error": "Password mancante"}, 400
-#
-#         # Verifica la vecchia password
-#         user_db = DBManager.get_user_by_id(int(current_user.get_id()))
-#         if not user_db or not check_password_hash(user_db['password'], current_password):
-#             return {"error": "Password attuale non corretta"}, 401
-#
-#         # Aggiorna con la nuova password
-#         new_hash = generate_password_hash(new_password)
-#         DBManager.update_user_credentials(int(current_user.get_id()), new_password_hash=new_hash)
-#
-#         return {"success": True}, 200
-#     except Exception as e:
-#         return {"error": str(e)}, 500
+@app.route('/api/user/change-password', methods=['POST'])
+@login_required
+def change_password():
+    """
+    Endpoint per cambiare la password.
+    Richiede JSON: { "current_password": "...", "new_password": "..." }
+    """
+    try:
+        data = request.get_json() or {}
+        current_password = data.get('current_password')
+        new_password = data.get('new_password')
 
-# @app.route('/api/user/profile', methods=['PUT'])
-# @login_required
-# def update_profile():
-#     """
-#     Endpoint per aggiornare il profilo (nome).
-#     Richiede JSON: { "name": "..." }
-#     """
-#     try:
-#         data = request.get_json() or {}
-#         new_name = data.get('name')
-#
-#         if not new_name:
-#             return {"error": "Nome mancante"}, 400
-#
-#         # Implementare DBManager.update_user_name o estendere update_user_credentials
-#         # DBManager.update_user_name(int(current_user.get_id()), new_name)
-#         
-#         return {"success": True}, 200
-#     except Exception as e:
-#         return {"error": str(e)}, 500
+        if not current_password or not new_password:
+            return {"error": "Password mancante"}, 400
+
+        # Verifica la vecchia password
+        user_db = DBManager.get_user_by_id(int(current_user.get_id()))
+        if not user_db or not check_password_hash(user_db['password'], current_password):
+            return {"error": "Password attuale non corretta"}, 401
+
+        # Aggiorna con la nuova password
+        new_hash = generate_password_hash(new_password)
+        DBManager.update_user_credentials(int(current_user.get_id()), new_password_hash=new_hash)
+
+        return {"success": True}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+@app.route('/api/user/profile', methods=['PUT'])
+@login_required
+def update_profile():
+    """
+    Endpoint per aggiornare il profilo (nome).
+    Richiede JSON: { "name": "..." }
+    """
+    try:
+        data = request.get_json() or {}
+        new_name = data.get('name')
+
+        if not new_name:
+            return {"error": "Nome mancante"}, 400
+
+        # Implementare DBManager.update_user_name o estendere update_user_credentials
+        # DBManager.update_user_name(int(current_user.get_id()), new_name)
+
+        return {"success": True}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
 
 
 @app.route('/api/preferences', methods=['PUT', 'POST'])
@@ -378,49 +382,15 @@ def send_message():
             if not success:
                 return {"error": "Unable to save the message (Not authorized or generic db error)"}, 403
 
-        messages = DBManager.get_chat_messages(user_id, conv_id)
-        messages.pop() # because is the current prompt
-
-        chat_history = []
-        past_images = dict()
-
-        for message in messages:
-            simple_message = {
-                "role" : message.get("role"),
-                "text" : message.get("text"),
-            }
-
-            if message.get("outfit"):
-                simple_message["outfit"] = message["outfit"]
-
-            raw_url = message.get("image_id")
-
-            if message.get("role") == "user" and raw_url:
-                try:
-                    parsed_path = urlparse(raw_url).path
-                    filename = os.path.basename(parsed_path)
-                    message_image_id = os.path.splitext(filename)[0]
-                    simple_message["image_id"] = message_image_id
-
-                    image_bytes = download_image(message_image_id)
-                    if image_bytes:
-                        past_images[message_image_id] = image_bytes
-                    else:
-                        print("Error while retrieving bytes from past images")
-
-                except Exception as e:
-                    print(e)
-
-            chat_history.append(simple_message)
+        if conv_id in cache:
+            chat_history, past_images = cache[conv_id]
+        else:
+            chat_history, past_images = load_messages(conv_id, user_id)
+            cache[conv_id] = (chat_history, past_images)
 
         image_data = None
         if image_id:
             image_data = (image_id, image)
-
-        print("========== DIO CANE =============")
-        print(chat_history)
-        print(past_images.keys())
-        print("=================================")
 
         output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
         status = output.get('status')
@@ -455,6 +425,44 @@ def send_message():
 
     except Exception as e:
         return {"error": str(e)}, 500
+
+
+def load_messages(conv_id, user_id):
+    messages = DBManager.get_chat_messages(user_id, conv_id)
+    messages.pop()  # because is the current prompt
+
+    chat_history = []
+    past_images = dict()
+
+    for message in messages:
+        simple_message = {
+            "role": message.get("role"),
+            "text": message.get("text"),
+        }
+
+        if message.get("outfit"):
+            simple_message["outfit"] = message["outfit"]
+
+        raw_url = message.get("image_id")
+
+        if message.get("role") == "user" and raw_url:
+            try:
+                parsed_path = urlparse(raw_url).path
+                filename = os.path.basename(parsed_path)
+                message_image_id = os.path.splitext(filename)[0]
+                simple_message["image_id"] = message_image_id
+
+                image_bytes = download_image(message_image_id)
+                if image_bytes:
+                    past_images[message_image_id] = image_bytes
+                else:
+                    print("Error while retrieving bytes from past images")
+
+            except Exception as e:
+                print(e)
+
+        chat_history.append(simple_message)
+    return chat_history, past_images
 
 
 @app.route('/api/conversations/rename', methods=['PUT', 'POST'])
