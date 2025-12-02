@@ -337,7 +337,8 @@ class DBManager:
                             'user' AS role,
                             p.created_at,
                             '[]'::json AS outfit, -- L'utente non ha outfit
-                            p.image_id
+                            p.image_id,
+                            NULL as status
                         FROM prompts p
                                  JOIN conversations c ON p.conversation_id = c.id
                         WHERE p.conversation_id = %s AND c.user_id = %s
@@ -370,7 +371,8 @@ class DBManager:
                                     ),
                                     '[]'::json
                             ) AS outfit,
-                            NULL AS image_id
+                            NULL AS image_id,
+                            ar.status as status
                         FROM ai_responses ar
                                  JOIN conversations c ON ar.conversation_id = c.id
                         WHERE ar.conversation_id = %s AND c.user_id = %s
