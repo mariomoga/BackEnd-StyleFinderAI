@@ -272,6 +272,7 @@ def update_profile():
     """
     Endpoint per aggiornare il profilo (nome).
     Richiede JSON: { "name": "..." }
+    Ritorna: { "success": true, "user": { id, name, email, preferences } }
     """
     try:
         data = request.get_json() or {}
@@ -280,10 +281,28 @@ def update_profile():
         if not new_name:
             return {"error": "Nome mancante"}, 400
 
-        # Implementare DBManager.update_user_name o estendere update_user_credentials
-        # DBManager.update_user_name(int(current_user.get_id()), new_name)
+        user_id = int(current_user.get_id())
+        updated = DBManager.update_user_name(user_id, new_name)
 
-        return {"success": True}, 200
+        if not updated:
+            return {"error": "Utente non trovato"}, 404
+
+        # Recupera l'utente aggiornato per restituirlo
+        user_db = DBManager.get_user_by_id(user_id)
+        if not user_db:
+            return {"error": "Utente non trovato"}, 404
+
+        preferences = DBManager.get_user_preferences(user_id)
+
+        return {
+            "success": True,
+            "user": {
+                "id": user_db['id'],
+                "name": user_db['name'],
+                "email": user_db['email'],
+                "preferences": preferences
+            }
+        }, 200
     except Exception as e:
         return {"error": str(e)}, 500
 

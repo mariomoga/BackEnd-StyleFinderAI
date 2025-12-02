@@ -198,20 +198,24 @@ class DBManager:
             except Exception:
                 pass
             raise
-    # @staticmethod
-    # def update_user_name(user_id: int, new_name: str) -> bool:
-    #     """Aggiorna il nome dell'utente."""
-    #     try:
-    #         conn = DBManager.get_db_connection()
-    #         cursor = conn.cursor()
-    #         cursor.execute("UPDATE users SET name = %s WHERE id = %s", (new_name, user_id))
-    #         updated = cursor.rowcount > 0
-    #         conn.commit()
-    #         cursor.close()
-    #         return updated
-    #     except Exception:
-    #         conn.rollback()
-    #         raise
+
+    @staticmethod
+    def update_user_name(user_id: int, new_name: str) -> bool:
+        """Aggiorna il nome dell'utente."""
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET name = %s WHERE id = %s", (new_name, user_id))
+            updated = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+            return updated
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            raise
 
     @staticmethod
     def update_user_preferences(user_id: int, new_preferences: dict) -> bool:
