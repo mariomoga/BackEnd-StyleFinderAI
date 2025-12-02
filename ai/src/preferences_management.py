@@ -12,7 +12,7 @@ def get_user_preferences(client: Client, user_id_key: int) -> tuple[dict, str | 
         # Selezioniamo il 'value' dalla tabella di collegamento e il 'name' dalla tabella 'preferences'.
         # Corrisponde a: SELECT up.value, p.name FROM user_preference up INNER JOIN preferences p ...
         response = client.table('user_preference').select(
-            'value, preferences(name)'
+            'users(gender), value, preferences(name)'
         ).eq('user_id', user_id_key).execute()
 
         # 2. Controlla se sono stati trovati dati
@@ -29,19 +29,16 @@ def get_user_preferences(client: Client, user_id_key: int) -> tuple[dict, str | 
             # Estrai il nome della preferenza (es. 'color', 'brand', 'gender')
             # Nota: 'preferences' qui è un oggetto annidato a causa della join
             pref_data = row.get('preferences')
+            gender = row.get("users").get("gender")
             if not pref_data:
                 continue
 
             p_name = pref_data.get('name')
             p_value = row.get('value')
 
-            if p_name == 'gender':
-                # Il genere viene estratto separatamente come nella funzione originale
-                gender = p_value
-            else:
-                # Mappa i nomi standard del DB (es. 'color') nei nomi attesi dal tuo codice (es. 'favorite_color')
-                key_name = f"favorite_{p_name}"
-                result_prefs[key_name] = p_value
+            key_name = f"favorite_{p_name}"
+            result_prefs[key_name] = p_value
+
 
         return result_prefs, gender
 

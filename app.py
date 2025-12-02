@@ -131,6 +131,7 @@ def login():
             return {"error": "Email or password not valid"}, 401
 
         preferences = DBManager.get_user_preferences(user['id'])
+        preferences['gender'] = user['gender']
         user_payload = {"id": user['id'], "name": user['name'], "email": user['email'], "preferences": preferences}
 
         # Autentica tramite Flask-Login (sessione cookie based)

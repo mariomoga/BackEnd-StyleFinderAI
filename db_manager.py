@@ -120,13 +120,13 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, name, email, password FROM users WHERE email = %s LIMIT 1",
+                "SELECT id, name, email, password, gender FROM users WHERE email = %s LIMIT 1",
                 (email,)
             )
             row = cursor.fetchone()
             cursor.close()
             if row:
-                return {"id": row[0], "name" : row[1], "email": row[2], "password": row[3]}
+                return {"id": row[0], "name" : row[1], "email": row[2], "password": row[3], "gender": row[4]}
             return None
         except Exception:
             raise
@@ -219,40 +219,55 @@ class DBManager:
 
     @staticmethod
     def update_user_preferences(user_id: int, new_preferences: dict) -> bool:
+        gender = new_preferences.get("gender")
+        del new_preferences["gender"]
+
+        # Prepariamo i dati come prima
         values_list = [(user_id, k, str(v)) for k, v in new_preferences.items()]
 
-        query = """
-                INSERT INTO user_preference (user_id, preference_id, value)
-                SELECT data.uid, p.id, data.p_val
-                FROM (VALUES %s) AS data (uid, p_name, p_val)
-                         JOIN preferences p ON p.name = data.p_name
-                ON CONFLICT (user_id, preference_id)
-                    DO UPDATE SET value = EXCLUDED.value \
-                """
+        # Query 1: Cancellazione totale delle preferenze dell'utente
+        delete_query = "DELETE FROM user_preference WHERE user_id = %s"
+
+        # Query 2: Inserimento massivo (senza ON CONFLICT, dato che abbiamo pulito)
+        # Manteniamo la JOIN per risolvere il preference_id dal nome
+        insert_query = """
+                       INSERT INTO user_preference (user_id, preference_id, value)
+                       SELECT data.uid, p.id, data.p_val
+                       FROM (VALUES %s) AS data (uid, p_name, p_val)
+                                JOIN preferences p ON p.name = data.p_name \
+                       """
 
         conn = None
         try:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
 
-            psycopg2.extras.execute_values(
-                cursor,
-                query,
-                values_list,
-                template=None,
-                page_size=100
-            )
+            # 1. Eseguiamo la DELETE
+            cursor.execute(delete_query, (user_id,))
+
+            # 2. Eseguiamo la INSERT solo se ci sono nuove preferenze da inserire
+            if values_list:
+                psycopg2.extras.execute_values(
+                    cursor,
+                    insert_query,
+                    values_list,
+                    template=None,
+                    page_size=100
+                )
+
+            if gender:
+                cursor.execute("UPDATE users SET gender = %s WHERE id = %s", (gender, user_id))
 
             conn.commit()
+            cursor.close()
             return True
 
         except Exception as e:
-            conn.rollback()
+            if conn:
+                conn.rollback()
 
-            print(f"Errore batch update per user {user_id}: {e}")
+            print(f"Errore replace preferences per user {user_id}: {e}")
             return False
-        finally:
-            cursor.close()
 
     @staticmethod
     def get_user_by_id(user_id: int):
@@ -264,13 +279,13 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, name, email, password FROM users WHERE id = %s LIMIT 1",
+                "SELECT id, name, email, password, gender FROM users WHERE id = %s LIMIT 1",
                 (user_id,)
             )
             row = cursor.fetchone()
             cursor.close()
             if row:
-                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3]}
+                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3], "gender": row[4]}
             return None
         except Exception:
             raise
