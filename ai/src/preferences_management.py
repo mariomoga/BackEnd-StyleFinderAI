@@ -1,6 +1,6 @@
 from supabase import Client
 
-def get_user_preferences(client: Client, user_id_key: int) -> tuple[dict, str | None] | tuple[None, None]:
+def get_user_preferences(client: Client, user_id_key: int)->dict|None:
     """
     Recupera le preferenze dell'utente dalla tabella relazionale 'user_preference'
     e le mappa nel formato piatto (favorite_color, favorite_material, ecc.)
@@ -12,24 +12,22 @@ def get_user_preferences(client: Client, user_id_key: int) -> tuple[dict, str | 
         # Selezioniamo il 'value' dalla tabella di collegamento e il 'name' dalla tabella 'preferences'.
         # Corrisponde a: SELECT up.value, p.name FROM user_preference up INNER JOIN preferences p ...
         response = client.table('user_preference').select(
-            'users(gender), value, preferences(name)'
+            'value, preferences(name)'
         ).eq('user_id', user_id_key).execute()
 
         # 2. Controlla se sono stati trovati dati
         if not response.data:
             # print(f"No preferences found for user ID: {user_id_key}")
-            return None, None
+            return None
 
         # 3. Trasforma la lista di righe in un unico dizionario
         # response.data sarà tipo: [{'value': 'black', 'preferences': {'name': 'color'}}, ...]
         result_prefs = {}
-        gender = None
 
         for row in response.data:
             # Estrai il nome della preferenza (es. 'color', 'brand', 'gender')
             # Nota: 'preferences' qui è un oggetto annidato a causa della join
             pref_data = row.get('preferences')
-            gender = row.get("users").get("gender")
             if not pref_data:
                 continue
 
@@ -40,8 +38,8 @@ def get_user_preferences(client: Client, user_id_key: int) -> tuple[dict, str | 
             result_prefs[key_name] = p_value
 
 
-        return result_prefs, gender
+        return result_prefs
 
     except Exception as e:
         print(f"Error retrieving user preferences for {user_id_key}: {e}")
-        return None, None
+        return None

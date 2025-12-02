@@ -1,5 +1,7 @@
 import os
 import logging
+
+from flask_login import current_user
 from google import genai
 import torch
 from supabase import create_client, Client
@@ -77,14 +79,16 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
 
     #THIS PROBABLY NEEDS TO BE DONE AS SOON AS THE USER LOGS IN AND THEN PASSED TO THE FUNCTION
     #DON'T KNOW IF THAT'S THE CASE SO I'LL LEAVE IT AS IS FOR NOW
+    gender = current_user.gender
     if user_id_key:
         #get_user_preferences FOR NOW QUERIES THE MOCK-UP USER DB I MADE
         #NEEDS TO BE CHANGED SO THAT IT QUERIES THE RIGHT DB OR REMOVED
         #ALTOGETHER IF NOT NEEDED
-        user_preferences, gender = get_user_preferences(SUPABASE_CLIENT, user_id_key)
+        user_preferences = get_user_preferences(SUPABASE_CLIENT, user_id_key)
     else:
         user_preferences = None
-        gender = "male" #MOCK-UP FOR NOW
+
+    print(user_preferences, gender)
 
     # 1. USER'S QUERY HANDLING
     logging.info("--- Sending request to Gemini for state transition... ---")

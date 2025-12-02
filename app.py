@@ -45,6 +45,7 @@ class AppUser(UserMixin):
         self.id = user_dict['id']
         self.email = user_dict['email']
         self._password_hash = user_dict.get('password')
+        self.gender = user_dict.get('gender')
 
     def get_id(self):  # type: ignore[override]
         return str(self.id)
