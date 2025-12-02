@@ -1,6 +1,6 @@
 import os
 import logging
-import google.generativeai as genai
+from google import genai
 import torch
 from supabase import create_client, Client
 from transformers import CLIPProcessor, CLIPModel

@@ -1,6 +1,6 @@
 matplotlib
 supabase
-google-generativeai
+google-genai
 psycopg2-binary
 flask
 flask-cors
@@ -9,3 +9,5 @@ flask-login
 Pillow
 torch
 transformers
+pandas
+torchvision
