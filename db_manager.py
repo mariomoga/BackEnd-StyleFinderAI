@@ -480,7 +480,30 @@ class DBManager:
                 if not product_id:
                     continue
 
-                # 3. Inserisci il collegamento in outfit_suggestion
+                # 3a. Inserisci o aggiorna il prodotto nella tabella product_data
+                # Assumiamo che la tabella product_data abbia le colonne: id, title, url, price, image_link, brand, material
+                upsert_product_query = """
+                    INSERT INTO product_data (id, title, url, price, image_link, brand, material)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        url = EXCLUDED.url,
+                        price = EXCLUDED.price,
+                        image_link = EXCLUDED.image_link,
+                        brand = EXCLUDED.brand,
+                        material = EXCLUDED.material;
+                """
+                cursor.execute(upsert_product_query, (
+                    product_id,
+                    item.get('title'),
+                    item.get('url'),
+                    item.get('price'),
+                    item.get('image_link'),
+                    item.get('brand'),
+                    item.get('material')
+                ))
+
+                # 3b. Inserisci il collegamento in outfit_suggestion
                 insert_suggestion_query = """
                                           INSERT INTO outfit_suggestion (ai_response_id, product_id)
                                           VALUES (%s, %s); \

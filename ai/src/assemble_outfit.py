@@ -13,7 +13,9 @@ def format_results(outfit_list):
                 'id': item_match.get('id'),
                 'similarity': float(f"{item_match.get('similarity'):.4f}"),
                 'image_link': item_match.get('image_link'),
-                'price': item_match.get('price')
+                'price': item_match.get('price'),
+                'brand': item_match.get('brand'),
+                'material': item_match.get('material')
             })
         return formatted_list
 
