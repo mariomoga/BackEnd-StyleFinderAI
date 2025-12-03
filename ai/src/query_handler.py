@@ -57,7 +57,9 @@ input_gathering_schema = types.Schema(
             }
         ),
         "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
+        "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
         "conversation_title": types.Schema(type=types.Type.STRING, description="A short, concise title for the conversation (max 5 words). Generate this ONLY if it is the first message in the conversation."),
+        "num_outfits": types.Schema(type=types.Type.INTEGER, description="The number of outfit options the user wants to see (default 1, max 3). Extract this from the user's request."),
     },
     #required=["status", "missing_info", "max_budget", "hard_constraints"]
     required=["status"]
@@ -84,7 +86,11 @@ outfit_schema = types.Schema(
     type=types.Type.OBJECT,
     properties={
         # The nested categories container
-        "outfit_plan": outfit_categories_schema,
+        "outfits": types.Schema(
+            type=types.Type.ARRAY,
+            items=outfit_categories_schema,
+            description="A list of distinct outfit plans. Generate multiple if the user requested options."
+        ),
 
         # Metadata fields at the top level
         "max_budget": types.Schema(
@@ -107,6 +113,7 @@ outfit_schema = types.Schema(
             description="A message for non-fashion related inquiries. MUST ONLY be present for guardrail messages."
         )
     },
+    required=["outfits", "max_budget"]
 )
 
 # --- 3. System Prompt and Guardrail ---
@@ -125,14 +132,22 @@ Determine if a 'max_budget' (a numerical or textual value in € or $) has been 
 
 If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 100000, set the 'status' to 'READY_TO_GENERATE'
 
-If the 'max_budget' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask for the budget also providing a tight budget range (in €) coherent with the user's request, and it should also politely ask if the user has any OPTIONAL hard constraints ONLY if not already stated by the user in a previous message.
+If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 100000, set the 'status' to 'READY_TO_GENERATE'
+
+If the 'max_budget' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask for the budget also providing a tight budget range (in €) coherent with the user's request. It should also politely ask if the user has any OPTIONAL hard constraints (if not already stated) AND if they would like to see multiple outfit options (e.g., "Would you like to see 1, 2, or 3 options?").
+
+Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
 If the 'max_budget' is present, set the 'status' to 'READY_TO_GENERATE'.
 
 [STEP 2: OUTFIT GENERATION (Use OutfitSchema)]
-ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case. The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case. 
+The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
+The final output should be a list of full outfits in the 'outfits' field. Each outfit should include at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+
+If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -179,7 +194,9 @@ If BOTH the 'max_budget' and the 'image_intent' are present, set the 'status' to
 a. If the intent was to find matching items or complete the outfit shown, generate only the complementary items required to form a full, cohesive look.
 b. If the intent was to find an outfit in the same style or aesthetic as the image, generate a full, coherent outfit that captures the overall fashion sense of the image.
 
-ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case. The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case.
+The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
+The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -335,12 +352,12 @@ def generate_outfit_plan(
             )
             final_data = final_response.parsed
 
-            final_plan_text = json.dumps(final_data.get('outfit_plan'))
+            final_plan_text = json.dumps(final_data.get('outfits'))
             chat_history.append({"role": "model", "text": final_plan_text})
 
             return {
                 'status': 'READY_TO_GENERATE',
-                'outfit_plan': final_data.get('outfit_plan'),
+                'outfits': final_data.get('outfits'),
                 'budget': final_data.get('max_budget'),
                 'hard_constraints': final_data.get('hard_constraints'),
                 'history': chat_history,

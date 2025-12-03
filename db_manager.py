@@ -324,8 +324,8 @@ class DBManager:
     @staticmethod
     def get_chat_messages(user_id, conversation_id)->list[dict]:
         """
-        Recupera la cronologia chat. Per i messaggi dell'AI, ricostruisce l'array 'outfit'
-        con i dettagli completi (titolo, prezzo, immagine, ecc.) prendendoli dalla tabella product_data.
+        Recupera la cronologia chat. Per i messaggi dell'AI, ricostruisce l'array 'outfits'
+        con i dettagli completi.
         """
         try:
             conn = DBManager.get_db_connection()
@@ -340,7 +340,7 @@ class DBManager:
                             NULL AS explanation,
                             'user' AS role,
                             p.created_at,
-                            '[]'::json AS outfit, -- L'utente non ha outfit
+                            '[]'::json AS outfits,
                             p.image_id,
                             NULL as status
                         FROM prompts p
@@ -357,24 +357,37 @@ class DBManager:
                             'model' AS role,
                             ar.created_at,
                             COALESCE(
-                                    (
-                                        SELECT json_agg(
-                                                       json_build_object(
-                                                               'id', pd.id,
-                                                               'title', pd.title,
-                                                               'url', pd.url,
-                                                               'price', pd.price,
-                                                               'image_link', pd.image_link,
-                                                               'brand', pd.brand,
-                                                               'material', pd.material
-                                                       )
-                                               )
+                                (
+                                    SELECT json_agg(
+                                        json_build_object(
+                                            'outfit', items,
+                                            'cost', cost,
+                                            'explanation', NULL -- Explanation is currently per-message in DB, not per outfit
+                                        ) ORDER BY outfit_index
+                                    )
+                                    FROM (
+                                        SELECT 
+                                            os.outfit_index,
+                                            json_agg(
+                                                json_build_object(
+                                                    'id', pd.id,
+                                                    'title', pd.title,
+                                                    'url', pd.url,
+                                                    'price', pd.price,
+                                                    'image_link', pd.image_link,
+                                                    'brand', pd.brand,
+                                                    'material', pd.material
+                                                )
+                                            ) AS items,
+                                            SUM(pd.price) as cost
                                         FROM outfit_suggestion os
-                                                 JOIN product_data pd ON os.product_id = pd.id
+                                        JOIN product_data pd ON os.product_id = pd.id
                                         WHERE os.ai_response_id = ar.id
-                                    ),
-                                    '[]'::json
-                            ) AS outfit,
+                                        GROUP BY os.outfit_index
+                                    ) grouped_outfits
+                                ),
+                                '[]'::json
+                            ) AS outfits,
                             NULL AS image_id,
                             ar.status as status
                         FROM ai_responses ar
@@ -395,13 +408,16 @@ class DBManager:
 
             for message in results:
                 if message.get("role") == "user":
-                    del message['explanation'], message['outfit']
+                    del message['explanation'], message['outfits']
                     if message['image_id']:
                         file_path = f"public/{message['image_id']}.jpg"
                         message['image_id'] = get_image_url(file_path)
 
                 if message.get("role") == "ai":
                     del message['image_id']
+                    # Ensure backward compatibility if needed, or frontend handles 'outfits'
+                    # If 'outfits' is empty but we have legacy data (not handled here as we assume migration or new data)
+                    pass
 
             return results
 
@@ -461,14 +477,23 @@ class DBManager:
 
             # 1. Estrai i dati dal dizionario
             short_message = response_data.get('message')
+            if not short_message:
+                short_message = "Here are your outfit options."
+            
             explanation = response_data.get('explanation')
-            outfit_items = response_data.get('outfit', [])
-            if not short_message or not explanation or len(outfit_items) == 0:
-                print(f"Empty values passed:\n {short_message}\n, {explanation}\n, {outfit_items}\n")
-                return -1
+            
+            # Handle new 'outfits' structure
+            outfits_list = response_data.get('outfits')
+            
+            # Fallback for legacy single outfit
+            if not outfits_list and response_data.get('outfit'):
+                outfits_list = [{'outfit': response_data.get('outfit')}]
+
+            if not outfits_list:
+                # Just save message if no outfits
+                pass
 
             # 2. Inserisci la risposta nella tabella ai_responses
-            # Usiamo RETURNING id per ottenere l'ID generato auto-increment
             insert_response_query = """
                                     INSERT INTO ai_responses (conversation_id, short_message, explanation, status)
                                     VALUES (%s, %s, %s, 'COMPLETED')
@@ -478,18 +503,20 @@ class DBManager:
             new_ai_response_id = cursor.fetchone()[0]
 
             # 3. Gestisci i prodotti e i suggerimenti
-            for item in outfit_items:
-                product_id = item.get('id')
+            if outfits_list:
+                for idx, outfit_obj in enumerate(outfits_list):
+                    items = outfit_obj.get('outfit', [])
+                    for item in items:
+                        product_id = item.get('id')
+                        if not product_id:
+                            continue
 
-                if not product_id:
-                    continue
-
-                # 3. Inserisci il collegamento in outfit_suggestion
-                insert_suggestion_query = """
-                                          INSERT INTO outfit_suggestion (ai_response_id, product_id)
-                                          VALUES (%s, %s); \
-                                          """
-                cursor.execute(insert_suggestion_query, (new_ai_response_id, product_id))
+                        # Inserisci il collegamento in outfit_suggestion con outfit_index
+                        insert_suggestion_query = """
+                                                  INSERT INTO outfit_suggestion (ai_response_id, product_id, outfit_index)
+                                                  VALUES (%s, %s, %s); \
+                                                  """
+                        cursor.execute(insert_suggestion_query, (new_ai_response_id, product_id, idx))
 
             # Conferma le modifiche (Commit)
             conn.commit()

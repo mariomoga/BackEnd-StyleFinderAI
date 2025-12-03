@@ -457,6 +457,7 @@ def send_message():
             "img_url" : image_url,
             "content" : {
                 "outfit" : output.get("outfit", []),
+                "outfits" : output.get("outfits", []),
                 "message" : text,
                 "explanation": output.get("explanation"),
             }

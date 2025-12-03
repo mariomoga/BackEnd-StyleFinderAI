@@ -116,78 +116,98 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     
     # --- Status READY_TO_GENERATE: Proceed to heavy Retrieval and Assembly ---
 
+    # --- Status READY_TO_GENERATE: Proceed to heavy Retrieval and Assembly ---
+
     # Extract final plan and constraints from the LLM response
-    outfit = response.get('outfit_plan')
-    budget = response.get('budget', 100000)
+    outfits_list = response.get('outfits')
+    if not outfits_list:
+        # Fallback for backward compatibility or if LLM messes up
+        single_outfit = response.get('outfit_plan')
+        if single_outfit:
+            outfits_list = [single_outfit]
+        else:
+            logging.error("Either LLM returned READY_TO_GENERATE but 'outfits' is missing or LLM returned an unexpected status")
+            return {"status": "Error", "message": "Failed to generate an outfit plan after successful budget confirmation.", "status_code": 500}
+
+    logging.info(f"Raw LLM Response: {response}")
+
+    budget = response.get('max_budget')
+    if not budget:
+        budget = response.get('budget')
+        
+    if not budget or budget == 0:
+        budget = 100000
     user_constraints = response.get('hard_constraints', {})
 
-    logging.info(f"LLM is READY_TO_GENERATE. Final Budget: {budget}")
+    logging.info(f"LLM is READY_TO_GENERATE. Final Budget: {budget}. Generating {len(outfits_list)} outfits.")
 
-    if not outfit:
-        logging.error("Either LLM returned READY_TO_GENERATE but 'outfit_plan' is missing or LLM returned an unexpected status")
-        return {"status": "Error", "message": "Failed to generate an outfit plan after successful budget confirmation.", "status_code": 500}
+    final_outfits_results = []
 
-    parsed_item_list = parse_outfit_plan(outfit, user_constraints)
-
-    #USER'S QUERY IS NOW RE-INTERPRETED TO BETTER UNDERSTAND USER'S INTENT AND WELL FORMATTED IN A JSON STRING
-    #CHECK USER'S QUERY FOR HATE-SPEECH OR NOT CONFORMING TO OUTFIT REQUESTS
-    if parsed_item_list is None:
-        print("Something went wrong with the processing of your request, try again.")
-        return {"error": "Something went wrong with the processing of your request, try again.", "status_code": 500}
-    
-    elif parsed_item_list and 'message' in parsed_item_list[0]:
-        error_msg = parsed_item_list[0]['message'] if parsed_item_list else "Parsing failed."
-        logging.error(f"Post-LLM parsing failed: {error_msg}")
-        return {"message": error_msg, "status_code": 406} #NOT SURE IF STATUS CODE IS CORRECT
+    for i, outfit_plan in enumerate(outfits_list):
+        logging.info(f"Processing outfit {i+1}/{len(outfits_list)}...")
         
-    # 2. EXTENDED QUERY EMBEDDING
-    logging.info(f"Generating embeddings for {len(parsed_item_list)} items...")
-    for item in parsed_item_list:
-        query_vector = get_text_embedding_vector(MODEL, PROC, DEVICE, item['description']) #GEMINI EXTENDED QUERY EMBEDDING
-        query_vector = query_vector.flatten().tolist() # Convert to list for Supabase (JSON standard)
-        item['embedding'] = query_vector
+        parsed_item_list = parse_outfit_plan(outfit_plan, user_constraints)
 
-    # 3. CLOTHING ITEMS RETRIEVAL
-    logging.info("Searching product candidates in vector DB...")
-    all_candidates = search_product_candidates_with_vector_db(SUPABASE_CLIENT, parsed_item_list, budget, gender)
-    if 'error' in all_candidates[0]:
-        error_detail = all_candidates[0]['error']
-        # Return a structured error response
-        return {
-        "error": "Retrieval Failed: Could not find matching products in the database.",
-        "detail": error_detail,
-        "status_code": 500 
-        }
+        if parsed_item_list is None:
+            logging.error(f"Parsing failed for outfit {i+1}")
+            continue # Skip this outfit if parsing fails
+        
+        elif parsed_item_list and 'message' in parsed_item_list[0]:
+            error_msg = parsed_item_list[0]['message'] if parsed_item_list else "Parsing failed."
+            logging.error(f"Post-LLM parsing failed for outfit {i+1}: {error_msg}")
+            continue
 
-    # --- UPDATED: Unpack the four return values from the new get_outfit ---
-    feasible_outfit: List[Dict[str, Any]]
-    remaining_budget: float
-    best_full_outfit: List[Dict[str, Any]]
-    best_full_cost: float
-    
-    # 4. OUTFIT ASSEMBLY
-    logging.info("Assembling and optimizing outfit with Knapsack...")
-    (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, budget)
-    
-    #NEED TO GIVE THE USER THE OPTION TO STILL GET THE FULL OUTFIT EVEN IF OVER BUDGET
-    final_result = select_final_outfit_and_metrics(all_candidates, budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
-    
-    # If the selection logic returns an error (e.g., Case 3 failure)
-    if 'error' in final_result:
-        return final_result # Return the error dictionary immediately
+        # 2. EXTENDED QUERY EMBEDDING
+        logging.info(f"Generating embeddings for {len(parsed_item_list)} items...")
+        for item in parsed_item_list:
+            query_vector = get_text_embedding_vector(MODEL, PROC, DEVICE, item['description']) 
+            query_vector = query_vector.flatten().tolist() 
+            item['embedding'] = query_vector
 
-    # 5. EXPLANATIONS GENERATION IS NOW ON-DEMAND
-    # logging.info("Generating outfit explanation...")
-    # explanations = explain_selected_outfit(GEMINI_CLIENT, GEMINI_MODEL_NAME, user_prompt, final_result['outfit'])
-    # final_result['explanation'] = explanations
+        # 3. CLOTHING ITEMS RETRIEVAL
+        logging.info("Searching product candidates in vector DB...")
+        all_candidates = search_product_candidates_with_vector_db(SUPABASE_CLIENT, parsed_item_list, budget, gender)
+        if 'error' in all_candidates[0]:
+            error_detail = all_candidates[0]['error']
+            logging.error(f"Retrieval failed for outfit {i+1}: {error_detail}")
+            continue
+
+        # 4. OUTFIT ASSEMBLY
+        logging.info("Assembling and optimizing outfit with Knapsack...")
+        (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, budget)
+        
+        final_result_single = select_final_outfit_and_metrics(all_candidates, budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
+        
+        if 'error' in final_result_single:
+             logging.error(f"Selection failed for outfit {i+1}: {final_result_single}")
+             continue
+        
+        logging.info(f"Outfit {i+1} result: Cost={final_result_single.get('cost')}, Budget={budget}, Remaining={final_result_single.get('remaining_budget')}")
+        final_outfits_results.append(final_result_single)
+
+    # Filter out over-budget outfits if we have at least one valid outfit
+    within_budget_outfits = [o for o in final_outfits_results if o.get('remaining_budget', 0) >= 0]
     
-    final_result['status'] = 'COMPLETED'
-    final_result['status_code'] = 200
-    final_result['chat_history'] = response.get('history', chat_history) # Send back the final history
-    final_result['conversation_title'] = response.get('conversation_title')
+    if within_budget_outfits:
+        final_outfits_results = within_budget_outfits
+        logging.info(f"Filtered out {len(final_outfits_results) - len(within_budget_outfits)} over-budget outfits.")
+    else:
+        logging.warning("No outfits within budget found. Returning all (potentially over-budget) results or empty.")
+
+    if not final_outfits_results:
+        return {"status": "Error", "message": "Failed to generate any valid outfits.", "status_code": 500}
+
+    final_response = {
+        'status': 'COMPLETED',
+        'message': "Here are your outfit options.",
+        'status_code': 200,
+        'chat_history': response.get('history', chat_history),
+        'conversation_title': response.get('conversation_title'),
+        'outfits': final_outfits_results 
+    }
     
-    logging.info("Successfully assembled and explained outfit.")
-    return final_result 
+    logging.info(f"Successfully assembled {len(final_outfits_results)} outfits.")
+    return final_response 
 
 
 # --- Web Server Integration (Conceptual) ---
