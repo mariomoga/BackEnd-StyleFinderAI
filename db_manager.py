@@ -376,7 +376,8 @@ class DBManager:
                                                     'price', pd.price,
                                                     'image_link', pd.image_link,
                                                     'brand', pd.brand,
-                                                    'material', pd.material
+                                                    'material', pd.material,
+                                                    'availability', pd.availability
                                                 )
                                             ) AS items,
                                             SUM(pd.price) as cost
