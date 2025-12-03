@@ -397,13 +397,36 @@ def send_message():
             image_id = str(uuid.uuid4())
             image_url = upload_image(image_id, image)
 
+        image_data = None
+        if image_id:
+            image_data = (image_id, image)
+
         if not conv_id:
             user_id = int(current_user.get_id())
-            conv_title = title_generator.generate_title(msg_text)
+            
+            # First chat: Call AI first to get title and response
+            chat_history = []
+            past_images = {}
+            
+            output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+            
+            conv_title = output.get('conversation_title')
+            if not conv_title:
+                conv_title = title_generator.generate_title(msg_text)
 
             conv_id = DBManager.create_conversation_with_message(user_id, conv_title, msg_text, image_id=image_id)
             if conv_id is None:
                 return {"error": "Error while creating a new conversation"}, 500
+                
+            # Update cache with the new conversation
+            # Note: The AI response will be added to DB later in this function, 
+            # but for cache we might want to be careful. 
+            # Actually, since we just created it, history is just the user message.
+            # But outfit_recommendation_handler returns the updated history (including AI response potentially?)
+            # No, outfit_recommendation_handler returns 'chat_history' in the output.
+            
+            # We can populate the cache with what we have
+            cache[conv_id] = (chat_history, past_images)
 
         else:
             conv_title = None
@@ -411,17 +434,14 @@ def send_message():
             if not success:
                 return {"error": "Unable to save the message (Not authorized or generic db error)"}, 403
 
-        if conv_id in cache:
-            chat_history, past_images = cache[conv_id]
-        else:
-            chat_history, past_images = load_messages(conv_id, user_id)
-            cache[conv_id] = (chat_history, past_images)
+            if conv_id in cache:
+                chat_history, past_images = cache[conv_id]
+            else:
+                chat_history, past_images = load_messages(conv_id, user_id)
+                cache[conv_id] = (chat_history, past_images)
 
-        image_data = None
-        if image_id:
-            image_data = (image_id, image)
+            output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
 
-        output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
         status = output.get('status')
         if not status:
             raise Exception("Error while generating recommendations")

@@ -110,6 +110,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
             "status": "AWAITING_INPUT",
             "prompt_to_user": response.get('prompt_to_user'),
             "chat_history": response.get('history', chat_history),
+            "conversation_title": response.get('conversation_title'),
             "status_code": 202 # Accepted (partial content)
         }
     
@@ -184,6 +185,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     final_result['status'] = 'COMPLETED'
     final_result['status_code'] = 200
     final_result['chat_history'] = response.get('history', chat_history) # Send back the final history
+    final_result['conversation_title'] = response.get('conversation_title')
     
     logging.info("Successfully assembled and explained outfit.")
     return final_result 

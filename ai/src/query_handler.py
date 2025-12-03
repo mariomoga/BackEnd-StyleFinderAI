@@ -57,6 +57,7 @@ input_gathering_schema = types.Schema(
             }
         ),
         "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
+        "conversation_title": types.Schema(type=types.Type.STRING, description="A short, concise title for the conversation (max 5 words). Generate this ONLY if it is the first message in the conversation."),
     },
     #required=["status", "missing_info", "max_budget", "hard_constraints"]
     required=["status"]
@@ -116,6 +117,10 @@ You are an expert conversational fashion stylist AI. Your primary goal is to fir
 
 Analyze the ENTIRE conversation history.
 
+Analyze the ENTIRE conversation history.
+
+If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
+
 Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
 
 If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 100000, set the 'status' to 'READY_TO_GENERATE'
@@ -154,6 +159,8 @@ You are an expert conversational fashion stylist AI. Your primary goal is to fir
 [STEP 1: INFORMATION GATHERING (Use InputGatheringSchema)]
 
 Analyze the ENTIRE conversation history and the attached image.
+
+If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
 
 Determine if the following two pieces of information are explicitly present:
 a. Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
@@ -306,6 +313,7 @@ def generate_outfit_plan(
             'status': 'AWAITING_INPUT',
             'prompt_to_user': dialogue_state['missing_info'],
             'history': chat_history,
+            'conversation_title': dialogue_state.get('conversation_title')
         }
 
     elif dialogue_state.get('status') == 'READY_TO_GENERATE':
@@ -335,7 +343,8 @@ def generate_outfit_plan(
                 'outfit_plan': final_data.get('outfit_plan'),
                 'budget': final_data.get('max_budget'),
                 'hard_constraints': final_data.get('hard_constraints'),
-                'history': chat_history
+                'history': chat_history,
+                'conversation_title': dialogue_state.get('conversation_title')
             }
         except Exception as e:
             print(e)
