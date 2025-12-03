@@ -10,7 +10,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from db_manager import DBManager
 import os
 import title_generator
-from ai.src.app import outfit_recommendation_handler
+
+from ai.src.app import outfit_recommendation_handler, generate_explanation_only
 from storage_manager import upload_image, compress_image, download_image
 from cachetools import LRUCache
 
@@ -418,14 +419,7 @@ def send_message():
             if conv_id is None:
                 return {"error": "Error while creating a new conversation"}, 500
                 
-            # Update cache with the new conversation
-            # Note: The AI response will be added to DB later in this function, 
-            # but for cache we might want to be careful. 
-            # Actually, since we just created it, history is just the user message.
-            # But outfit_recommendation_handler returns the updated history (including AI response potentially?)
-            # No, outfit_recommendation_handler returns 'chat_history' in the output.
-            
-            # We can populate the cache with what we have
+
             cache[conv_id] = (chat_history, past_images)
 
         else:
@@ -472,6 +466,28 @@ def send_message():
 
         return response, 200
 
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+@app.route('/api/outfit/explain', methods=['POST'])
+@login_required
+def explain_outfit():
+    """
+    Endpoint to generate an explanation for a specific outfit on demand.
+    Expects JSON: { "user_prompt": "...", "outfit_data": [...] }
+    """
+    try:
+        data = request.get_json() or {}
+        user_prompt = data.get('user_prompt')
+        outfit_data = data.get('outfit_data')
+        
+        if not user_prompt or not outfit_data:
+             return {"error": "Missing user_prompt or outfit_data"}, 400
+             
+        explanation = generate_explanation_only(user_prompt, outfit_data)
+        
+        return {"success": True, "explanation": explanation}, 200
+        
     except Exception as e:
         return {"error": str(e)}, 500
 

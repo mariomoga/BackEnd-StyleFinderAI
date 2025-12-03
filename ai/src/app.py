@@ -176,11 +176,10 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     if 'error' in final_result:
         return final_result # Return the error dictionary immediately
 
-    # 5. EXPLANATIONS GENERATION, RIGHT NOW MANDATORY, NEEDS TO BE MADE OPTIONAL
-    # ONLY IF THE USER WANTS THEM 
-    logging.info("Generating outfit explanation...")
-    explanations = explain_selected_outfit(GEMINI_CLIENT, GEMINI_MODEL_NAME, user_prompt, final_result['outfit'])
-    final_result['explanation'] = explanations
+    # 5. EXPLANATIONS GENERATION IS NOW ON-DEMAND
+    # logging.info("Generating outfit explanation...")
+    # explanations = explain_selected_outfit(GEMINI_CLIENT, GEMINI_MODEL_NAME, user_prompt, final_result['outfit'])
+    # final_result['explanation'] = explanations
     
     final_result['status'] = 'COMPLETED'
     final_result['status_code'] = 200
@@ -216,5 +215,17 @@ def handle_outfit_request():
         # Proper error handling
         return jsonify({"error": str(e)}), 500
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    if __name__ == '__main__':
+        app.run(debug=True)
+
+def generate_explanation_only(user_prompt: str, outfit_data: List[Dict[str, Any]]) -> str:
+    """
+    Helper function to generate explanations on demand.
+    """
+    logging.info("Generating outfit explanation (On-Demand)...")
+    try:
+        explanations = explain_selected_outfit(GEMINI_CLIENT, GEMINI_MODEL_NAME, user_prompt, outfit_data)
+        return explanations
+    except Exception as e:
+        logging.error(f"Error generating explanation: {e}")
+        return "Sorry, I couldn't generate an explanation at this time."
