@@ -219,11 +219,13 @@ class DBManager:
 
     @staticmethod
     def update_user_preferences(user_id: int, new_preferences: dict) -> bool:
-        gender = new_preferences.get("gender")
-        del new_preferences["gender"]
+        # Estrai gender se presente (è un campo separato nella tabella users)
+        # Usa un sentinel per distinguere "non passato" da "passato come vuoto"
+        gender_not_provided = object()
+        gender = new_preferences.pop("gender", gender_not_provided)
 
-        # Prepariamo i dati come prima
-        values_list = [(user_id, k, str(v)) for k, v in new_preferences.items()]
+        # Prepariamo i dati - FILTRA i valori vuoti per non inserire preferenze vuote
+        values_list = [(user_id, k, str(v)) for k, v in new_preferences.items() if v and str(v).strip()]
 
         # Query 1: Cancellazione totale delle preferenze dell'utente
         delete_query = "DELETE FROM user_preference WHERE user_id = %s"
@@ -255,8 +257,10 @@ class DBManager:
                     page_size=100
                 )
 
-            if gender:
-                cursor.execute("UPDATE users SET gender = %s WHERE id = %s", (gender, user_id))
+            # Aggiorna gender solo se è stato passato esplicitamente (anche se vuoto per resettarlo)
+            if gender is not gender_not_provided:
+                # Se gender è stringa vuota, impostiamo NULL nel DB
+                cursor.execute("UPDATE users SET gender = %s WHERE id = %s", (gender if gender else None, user_id))
 
             conn.commit()
             cursor.close()

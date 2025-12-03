@@ -7,7 +7,8 @@ flask-cors
 python-dotenv
 flask-login
 Pillow
-torch
-transformers
+torch==2.1.2
+transformers==4.36.2
+numpy==1.26.4
 pandas
-torchvision
+torchvision==0.16.2

@@ -132,7 +132,9 @@ def login():
             return {"error": "Email or password not valid"}, 401
 
         preferences = DBManager.get_user_preferences(user['id'])
-        preferences['gender'] = user['gender']
+        # Aggiungi gender dalle info utente (solo se presente)
+        if user.get('gender'):
+            preferences['gender'] = user['gender']
         user_payload = {"id": user['id'], "name": user['name'], "email": user['email'], "preferences": preferences}
 
         # Autentica tramite Flask-Login (sessione cookie based)
@@ -176,7 +178,10 @@ def check_session():
     try:
         # Recupero completo utente dal DB se servono preferenze
         user_db = DBManager.get_user_by_id(int(current_user.get_id()))
-        preferences = DBManager.get_user_preferences(user_db['id']) if user_db else []
+        preferences = DBManager.get_user_preferences(user_db['id']) if user_db else {}
+        # Aggiungi gender dalle info utente (è salvato nella tabella users, non in user_preference)
+        if user_db and user_db.get('gender'):
+            preferences['gender'] = user_db['gender']
         user_payload = {"id": user_db['id'], "name": user_db['name'], "email": user_db['email'], "preferences": preferences} if user_db else {}
         return {"success": True, "user": user_payload}, 200
     except Exception as e:
@@ -295,6 +300,9 @@ def update_profile():
             return {"error": "Utente non trovato"}, 404
 
         preferences = DBManager.get_user_preferences(user_id)
+        # Aggiungi gender dalle info utente
+        if user_db.get('gender'):
+            preferences['gender'] = user_db['gender']
 
         return {
             "success": True,
