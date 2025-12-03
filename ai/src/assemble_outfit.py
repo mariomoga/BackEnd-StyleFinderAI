@@ -1,6 +1,4 @@
-import json
 
-import numpy as np
 from typing import List, Dict, Tuple, Any
 
 
@@ -15,98 +13,11 @@ def format_results(outfit_list):
                 'id': item_match.get('id'),
                 'similarity': float(f"{item_match.get('similarity'):.4f}"),
                 'image_link': item_match.get('image_link'),
-                'price': item_match.get('price')
+                'price': item_match.get('price'),
+                'brand': item_match.get('brand'),
+                'material': item_match.get('material')
             })
         return formatted_list
-
-
-# Helper function for the Knapsack DP logic, designed to be reusable.
-def _run_knapsack_dp(
-    processed_candidates: List[List[Dict]], 
-    max_budget_cents: int, 
-    num_categories: int
-) -> Tuple[List[Dict], float, int]:
-    """
-    Core Dynamic Programming logic. Finds the best similarity score and the path 
-    to achieve it under the given max_budget_cents.
-    
-    Note: If 'SKIP' items were added, they will be ignored in the traceback.
-    """
-    
-    # dp_similarity[w]: Max total similarity achievable with a total cost of 'w' cents.
-    dp_similarity = np.full(max_budget_cents + 1, -1.0)
-    dp_similarity[0] = 0.0 
-
-    # path_table[i][w] stores the INDEX (within its candidate list) of the item 
-    # selected from CATEGORY i-1 that resulted in a total cost of 'w' cents.
-    path_table = np.full((num_categories + 1, max_budget_cents + 1), -1, dtype=int) 
-
-    # 1. Dynamic Programming Iteration
-    current_dp = dp_similarity
-    for i, category_items in enumerate(processed_candidates):
-        # Use a fresh copy to prevent using items from the current category multiple times
-        new_dp_similarity = np.copy(current_dp)
-        
-        for current_cost_cents in range(max_budget_cents + 1):
-            # Only proceed if the previous state (before this category) was reachable
-            if current_dp[current_cost_cents] >= 0:
-                
-                # Try adding an item from the current category (i)
-                for item_idx, item in enumerate(category_items):
-                    item_cost_cents = item['price_in_cents']
-                    new_cost_cents = current_cost_cents + item_cost_cents
-                    
-                    # Check the budget constraint for this run
-                    if new_cost_cents <= max_budget_cents:
-                        new_total_similarity = current_dp[current_cost_cents] + item['similarity']
-                        
-                        # Check if this new combination is better than the existing one for new_cost_cents
-                        if new_total_similarity > new_dp_similarity[new_cost_cents]:
-                            new_dp_similarity[new_cost_cents] = new_total_similarity
-                            # Record the index of the item selected from the current category (i)
-                            path_table[i+1][new_cost_cents] = item_idx
-                            
-        current_dp = new_dp_similarity
-
-    # 2. Find the Optimal Result (Max Similarity)
-    best_similarity = -1.0
-    best_cost_cents = -1
-
-    # Search for the highest similarity across all valid costs
-    for cost in range(max_budget_cents, -1, -1):
-        if current_dp[cost] > best_similarity:
-            best_similarity = current_dp[cost]
-            best_cost_cents = cost
-
-    # 3. Traceback
-    final_outfit_results = []
-    
-    # Ensure a non-empty result was found
-    if best_cost_cents >= 0 and best_similarity > 0:
-        current_cost_cents = best_cost_cents
-        
-        # Iterate backwards through the categories
-        for i in range(num_categories - 1, -1, -1):
-            # Item index from category 'i' is stored in path_table[i+1]
-            item_index = path_table[i+1][current_cost_cents]
-            
-            # The item index must be non-negative to indicate a selection was made
-            if item_index >= 0:
-                selected_item = processed_candidates[i][item_index]
-                
-                # We trace back ONLY if the item wasn't the 'SKIP' placeholder
-                if selected_item['price_in_cents'] != 0 or selected_item['similarity'] != 0.0:
-                    final_outfit_results.append(selected_item['data'])
-                    
-                    # Update the cost to the state *before* this item was added
-                    item_cost_cents = selected_item['price_in_cents']
-                    current_cost_cents -= item_cost_cents
-                # If it is a SKIP item, current_cost_cents remains the same.
-                
-        # Results collected backwards, reverse them to match original category order
-        final_outfit_results.reverse()
-        
-    return final_outfit_results, best_similarity, best_cost_cents
 
 
 def _run_optimized_knapsack_with_skip(
