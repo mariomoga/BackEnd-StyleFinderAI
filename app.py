@@ -539,6 +539,28 @@ def delete_conversation():
     except Exception as e:
         return {"error": str(e)}, 500
 
+@app.route('/api/conversations/delete-all', methods=['DELETE'])
+@login_required
+def delete_all_conversations():
+    """Elimina tutte le conversazioni dell'utente autenticato.
+
+    Risposte:
+      - 401 se non autenticato
+      - 200 con {success: true, deleted_count: N}
+    """
+    try:
+        user_id = int(current_user.get_id())
+        deleted_count = DBManager.delete_all_user_conversations(user_id)
+        
+        # Pulisce anche la cache per questo utente
+        keys_to_remove = [key for key in cache.keys() if str(key).startswith(f"{user_id}_")]
+        for key in keys_to_remove:
+            cache.pop(key, None)
+
+        return {"success": True, "deleted_count": deleted_count}, 200
+    except Exception as e:
+        return {"error": str(e)}, 500
+
 @app.route('/api/preferences/all', methods=['GET'])
 @login_required
 def preferences_all():

@@ -613,6 +613,52 @@ class DBManager:
             raise
 
     @staticmethod
+    def delete_all_user_conversations(user_id: int) -> int:
+        """Elimina tutte le conversazioni di un utente e le relative immagini dallo storage.
+
+        Ritorna il numero di conversazioni eliminate.
+        """
+        conn = None
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+
+            # 1. Recupera tutte le immagini delle conversazioni dell'utente
+            cursor.execute(
+                """
+                SELECT p.image_id
+                FROM prompts p
+                         JOIN conversations c ON p.conversation_id = c.id
+                WHERE c.user_id = %s AND p.image_id IS NOT NULL
+                """,
+                (user_id,)
+            )
+
+            images_to_delete = [str(row[0]) for row in cursor.fetchall()]
+
+            # 2. Elimina le immagini dallo storage
+            if images_to_delete:
+                delete_images(images_to_delete)
+
+            # 3. Elimina tutte le conversazioni dell'utente (CASCADE elimina prompts e risposte)
+            cursor.execute(
+                "DELETE FROM conversations WHERE user_id = %s",
+                (user_id,)
+            )
+
+            deleted_count = cursor.rowcount
+            conn.commit()
+            cursor.close()
+
+            return deleted_count
+
+        except Exception as e:
+            print(f"Errore durante la cancellazione di tutte le conversazioni: {e}")
+            if conn:
+                conn.rollback()
+            raise
+
+    @staticmethod
     def delete_user(user_id: int) -> bool:
         """Elimina un utente e tutti i suoi dati associati.
 

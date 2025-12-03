@@ -59,7 +59,7 @@ GEMINI_MODEL_NAME = 'gemini-2.0-flash'
 # 3. CLIP Model Initialization (Heavy/Critical Resource)
 CLIP_MODEL_NAME = "patrickjohncyh/fashion-clip"
 try:
-    DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    DEVICE = torch.device("cpu")
     MODEL = CLIPModel.from_pretrained(CLIP_MODEL_NAME)
     PROC = CLIPProcessor.from_pretrained(CLIP_MODEL_NAME, use_fast=True)
     MODEL.to(DEVICE)
