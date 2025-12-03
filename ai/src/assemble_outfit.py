@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 from typing import List, Dict, Tuple, Any
 
@@ -107,9 +109,85 @@ def _run_knapsack_dp(
     return final_outfit_results, best_similarity, best_cost_cents
 
 
+def _run_optimized_knapsack_with_skip(
+    processed_candidates: List[List[Dict]], 
+    max_budget_cents: int
+) -> Tuple[List[Dict], int]:
+    """
+    Optimized DP for finding best outfit allowing category skips.
+    Uses a dictionary-based DP to avoid allocating huge arrays.
+    
+    Returns: (outfit_items, total_cost_cents)
+    """
+    num_categories = len(processed_candidates)
+    
+    # dp[cost] = (similarity, path) where path is list of selected item indices
+    # We use a dict to only store reachable states
+    dp = {0: (0.0, [])}
+    
+    for cat_idx, category_items in enumerate(processed_candidates):
+        new_dp = {}
+        
+        for current_cost, (current_similarity, current_path) in dp.items():
+            # Option 1: Skip this category
+            if current_cost not in new_dp or new_dp[current_cost][0] < current_similarity:
+                new_dp[current_cost] = (current_similarity, current_path + [None])
+            
+            # Option 2: Select an item from this category
+            for item_idx, item in enumerate(category_items):
+                item_cost = item['price_in_cents']
+                new_cost = current_cost + item_cost
+                
+                if new_cost <= max_budget_cents:
+                    new_similarity = current_similarity + item['similarity']
+                    
+                    if new_cost not in new_dp or new_dp[new_cost][0] < new_similarity:
+                        new_dp[new_cost] = (new_similarity, current_path + [item_idx])
+        
+        dp = new_dp
+    
+    # Find the best result
+    best_similarity = -1.0
+    best_cost = 0
+    best_path = []
+    
+    for cost, (similarity, path) in dp.items():
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_cost = cost
+            best_path = path
+    
+    # Reconstruct outfit from path
+    outfit = []
+    for cat_idx, item_idx in enumerate(best_path):
+        if item_idx is not None:
+            outfit.append(processed_candidates[cat_idx][item_idx]['data'])
+    
+    return outfit, best_cost
+
+
+def _find_best_full_outfit(processed_candidates: List[List[Dict]]) -> Tuple[List[Dict], int]:
+    """
+    Find the best full outfit (one item per category) that maximizes similarity.
+    Simply picks the highest similarity item from each category.
+    
+    Returns: (outfit_items, total_cost_cents)
+    """
+    outfit = []
+    total_cost = 0
+    
+    for category_items in processed_candidates:
+        # Find item with highest similarity in this category
+        best_item = max(category_items, key=lambda x: x['similarity'])
+        outfit.append(best_item['data'])
+        total_cost += best_item['price_in_cents']
+    
+    return outfit, total_cost
+
+
 def get_outfit(all_candidates: List[List[Dict]], budget: float) -> Tuple[List[Dict], float, List[Dict], float]:
     """
-    Implements the Dynamic Programming solution, returning the best feasible (partial/full) 
+    Implements an optimized Dynamic Programming solution, returning the best feasible (partial/full) 
     outfit and the best infeasible (full) outfit for suggestion.
     
     Returns: (feasible_outfit, feasible_remaining_budget, best_full_outfit, best_full_cost)
@@ -118,68 +196,36 @@ def get_outfit(all_candidates: List[List[Dict]], budget: float) -> Tuple[List[Di
     num_categories = len(all_candidates)
     max_budget_cents = int(round(budget * 100))
     
-    # Calculate a budget large enough to ensure the DP finds the highest similarity 
-    # score for the full outfit, regardless of the user's budget.
-    max_total_possible_price = sum(max(item['price'] for item in cat) for cat in all_candidates)
-    huge_budget_cents = int(round(max_total_possible_price * 100)) + max_budget_cents + 1000 
-    
-    
-    # --- PRE-PROCESSING CANDIDATES (Original structure) ---
-    original_processed_candidates = []
+    # --- PRE-PROCESSING CANDIDATES ---
+    processed_candidates = []
     for category_list in all_candidates:
         category_items = []
         for item in category_list:
             category_items.append({
                 'price_in_cents': int(round(item['price'] * 100)),
                 'similarity': item['similarity'],
-                'data': item # Keep a reference to the original data
+                'data': item
             })
-        original_processed_candidates.append(category_items)
+        processed_candidates.append(category_items)
 
-
-    # --- SCENARIO 1: BEST FEASIBLE (PARTIAL OR FULL) OUTFIT (Primary Recommendation) ---
-    # Allow skipping an item by adding a 0-cost, 0-similarity placeholder.
-    feasible_processed_candidates = []
-    for category_items in original_processed_candidates:
-        # Index 0 is the SKIP option (ensures price and similarity are unique for traceback logic)
-        skip_item = {
-            'price_in_cents': 0,
-            'similarity': 0.0,
-            'data': {'title': 'SKIP', 'price': 0.0} 
-        }
-        feasible_processed_candidates.append([skip_item] + category_items)
-        
-    feasible_outfit, _, feasible_cost_cents = _run_knapsack_dp(
-        feasible_processed_candidates, 
-        max_budget_cents, 
-        num_categories
+    # --- SCENARIO 1: BEST FEASIBLE (PARTIAL OR FULL) OUTFIT ---
+    # Use optimized DP that allows skipping categories
+    feasible_outfit, feasible_cost_cents = _run_optimized_knapsack_with_skip(
+        processed_candidates, 
+        max_budget_cents
     )
     
     feasible_remaining_budget = budget - (feasible_cost_cents / 100)
     
-    
-    # --- SCENARIO 2: BEST FULL OUTFIT (May be Infeasible/Over Budget) ---
-    # 1. Use original candidates (no skips allowed, forcing one item per category)
-    # 2. Use a huge budget to ensure the DP finishes finding the max similarity score
-    
-    best_full_outfit, _, best_full_cost_cents = _run_knapsack_dp(
-        original_processed_candidates, 
-        huge_budget_cents, # Ignore the true budget limit here
-        num_categories
-    )
+    # --- SCENARIO 2: BEST FULL OUTFIT (Must select one item per category) ---
+    # Use greedy approach to find best similarity regardless of budget
+    best_full_outfit, best_full_cost_cents = _find_best_full_outfit(processed_candidates)
     
     best_full_cost = best_full_cost_cents / 100
-    
 
     # --- FINAL FORMATTING & RETURN ---
     formatted_feasible_outfit = format_results(feasible_outfit)
     formatted_best_full_outfit = format_results(best_full_outfit)
-    
-    # Handle edge case where no feasible items were selected at all.
-    if not formatted_feasible_outfit and formatted_best_full_outfit:
-        # If the best budget-compliant choice was to skip everything, we still 
-        # return the full outfit as the alternative suggestion.
-        pass
         
     return (
         formatted_feasible_outfit, 
