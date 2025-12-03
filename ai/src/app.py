@@ -209,35 +209,6 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     logging.info(f"Successfully assembled {len(final_outfits_results)} outfits.")
     return final_response 
 
-
-# --- Web Server Integration (Conceptual) ---
-from flask import Flask, request, jsonify
-
-app = Flask(__name__)
-
-@app.route('/api/outfit', methods=['POST'])
-def handle_outfit_request():
-    # 1. Get data from the web request body
-    data = request.json
-    
-    # 2. Call the refactored function
-    try:
-        result = outfit_recommendation_handler(
-            user_prompt=data.get('user_prompt'),
-            budget=float(data.get('budget')),
-            user_id_key=int(data.get('user_id')),
-            image_path=data.get('image_path'), # If you handle image uploads
-            partial_input=data.get('partial_input')
-        )
-        return jsonify(result), 200
-        
-    except Exception as e:
-        # Proper error handling
-        return jsonify({"error": str(e)}), 500
-
-    if __name__ == '__main__':
-        app.run(debug=True)
-
 def generate_explanation_only(user_prompt: str, outfit_data: List[Dict[str, Any]]) -> str:
     """
     Helper function to generate explanations on demand.
