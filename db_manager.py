@@ -516,7 +516,8 @@ class DBManager:
                         # Inserisci il collegamento in outfit_suggestion con outfit_index
                         insert_suggestion_query = """
                                                   INSERT INTO outfit_suggestion (ai_response_id, product_id, outfit_index)
-                                                  VALUES (%s, %s, %s); \
+                                                  VALUES (%s, %s, %s)
+                                                  ON CONFLICT DO NOTHING; \
                                                   """
                         cursor.execute(insert_suggestion_query, (new_ai_response_id, product_id, idx))
 

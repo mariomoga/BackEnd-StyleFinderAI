@@ -54,7 +54,7 @@ except Exception as e:
     # Reraise the exception to stop the server process from starting
     raise RuntimeError("Failed to initialize the Google Gemini Client.") from e
 
-GEMINI_MODEL_NAME = 'gemini-2.0-flash'
+GEMINI_MODEL_NAME = 'gemini-2.5-flash'
 
 # 3. CLIP Model Initialization (Heavy/Critical Resource)
 CLIP_MODEL_NAME = "patrickjohncyh/fashion-clip"
@@ -136,7 +136,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         budget = response.get('budget')
         
     if not budget or budget == 0:
-        budget = 100000
+        budget = None
     user_constraints = response.get('hard_constraints', {})
 
     logging.info(f"LLM is READY_TO_GENERATE. Final Budget: {budget}. Generating {len(outfits_list)} outfits.")
@@ -293,7 +293,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
              pass
 
         # 4. OUTFIT ASSEMBLY
-        logging.info("Assembling and optimizing outfit with Knapsack...")
+        logging.info("Assembling outfit...")
         (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, budget)
         
         final_result_single = select_final_outfit_and_metrics(all_candidates, budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
@@ -306,7 +306,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         final_outfits_results.append(final_result_single)
 
     # Filter out over-budget outfits if we have at least one valid outfit
-    within_budget_outfits = [o for o in final_outfits_results if o.get('remaining_budget', 0) >= 0]
+    within_budget_outfits = [o for o in final_outfits_results if o.get('remaining_budget') is None or o.get('remaining_budget', 0) >= 0]
     
     if within_budget_outfits:
         final_outfits_results = within_budget_outfits
