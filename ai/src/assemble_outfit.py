@@ -1,6 +1,8 @@
 
 from typing import List, Dict, Tuple, Any
 
+from rich.jupyter import display
+
 
 def format_results(outfit_list):
         """Formats the list of selected item dicts for final output."""
@@ -96,7 +98,7 @@ def _find_best_full_outfit(processed_candidates: List[List[Dict]]) -> Tuple[List
     return outfit, total_cost
 
 
-def get_outfit(all_candidates: List[List[Dict]], budget: float) -> Tuple[List[Dict], float, List[Dict], float]:
+def get_outfit(all_candidates: List[List[Dict]], budget: float|None) -> Tuple[List[Dict], float, List[Dict], float]:
     """
     Implements an optimized Dynamic Programming solution, returning the best feasible (partial/full) 
     outfit and the best infeasible (full) outfit for suggestion.
@@ -104,9 +106,6 @@ def get_outfit(all_candidates: List[List[Dict]], budget: float) -> Tuple[List[Di
     Returns: (feasible_outfit, feasible_remaining_budget, best_full_outfit, best_full_cost)
     """
 
-    num_categories = len(all_candidates)
-    max_budget_cents = int(round(budget * 100))
-    
     # --- PRE-PROCESSING CANDIDATES ---
     processed_candidates = []
     for category_list in all_candidates:
@@ -118,6 +117,32 @@ def get_outfit(all_candidates: List[List[Dict]], budget: float) -> Tuple[List[Di
                 'data': item
             })
         processed_candidates.append(category_items)
+
+    if not budget:
+        feasible_outfit = []
+        total_cost = 0
+
+        for cat_idx, category_items in enumerate(processed_candidates):
+            if not category_items:
+                continue
+
+            # Since there's no budget, i take the most expensive item based on similarity
+            best_item = max(category_items, key=lambda x: (x['similarity'], x['price_in_cents']))
+
+            feasible_outfit.append(best_item['data'])
+            total_cost += best_item['price_in_cents']
+
+        formatted_outfit = format_results(feasible_outfit)
+        total_cost /= 100.0
+        return (
+            formatted_outfit,
+            0.0,
+            formatted_outfit,
+            total_cost
+        )
+
+
+    max_budget_cents = int(round(budget * 100))
 
     # --- SCENARIO 1: BEST FEASIBLE (PARTIAL OR FULL) OUTFIT ---
     # Use optimized DP that allows skipping categories
@@ -147,7 +172,7 @@ def get_outfit(all_candidates: List[List[Dict]], budget: float) -> Tuple[List[Di
 
 def select_final_outfit_and_metrics(
     all_candidates: List[List[Dict[str, Any]]],
-    budget: float,
+    budget: float|None,
     feasible_outfit: List[Dict[str, Any]],
     remaining_budget: float,
     best_full_outfit: List[Dict[str, Any]],
@@ -158,28 +183,25 @@ def select_final_outfit_and_metrics(
     """
     num_required_items = len(all_candidates)
     num_feasible_items = len(feasible_outfit)
-    
-    # Initialize variables to hold the selection
-    outfit_to_display: List[Dict[str, Any]] = []
-    display_cost: float = 0.0
-    final_remaining_budget: float = 0.0
-    message: str = ""
+
+    if not budget:
+        display_cost = None
+    else:
+        display_cost = round(budget - remaining_budget, 2)
 
     # Case 1: Full outfit found within budget
     if num_feasible_items == num_required_items:
         message = "Full Outfit Found: All requested items were successfully matched within your budget."
         outfit_to_display = feasible_outfit
-        display_cost = budget - remaining_budget # Actual cost of the feasible full outfit
         final_remaining_budget = remaining_budget
 
     # Case 2: Partial outfit found within budget (Primary recommendation)
-    elif num_feasible_items > 0 and num_feasible_items < num_required_items:
+    elif 0 < num_feasible_items < num_required_items:
         message = (
             f"Partial Outfit Recommendation: We found the best outfit of {num_feasible_items} out of {num_required_items} items under your budget (€{budget:.2f}). "
             f"The best possible full outfit (all categories) costs €{best_full_cost:.2f}."
         )
         outfit_to_display = feasible_outfit
-        display_cost = budget - remaining_budget # Actual cost of the feasible partial outfit
         final_remaining_budget = remaining_budget
     
     # Case 3: No feasible items found (Default to best full outfit as the only suggestion)
@@ -197,7 +219,7 @@ def select_final_outfit_and_metrics(
             f"Suggestion: Displaying the best possible full outfit, which costs €{best_full_cost:.2f}."
         )
         outfit_to_display = best_full_outfit
-        display_cost = best_full_cost
+        display_cost = round(best_full_cost, 2)
         # Recalculate remaining budget to be clearly negative based on the suggestion
         final_remaining_budget = budget - best_full_cost 
     
@@ -213,7 +235,7 @@ def select_final_outfit_and_metrics(
     # Final Output Structure for the API
     return {
         "outfit": outfit_to_display,
-        "cost": round(display_cost, 2),
+        "cost": display_cost,
         "remaining_budget": round(final_remaining_budget, 2),
         "message": message,
         "status_code": 200 # Indicate success, even if it's a partial outfit

@@ -116,8 +116,6 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     
     # --- Status READY_TO_GENERATE: Proceed to heavy Retrieval and Assembly ---
 
-    # --- Status READY_TO_GENERATE: Proceed to heavy Retrieval and Assembly ---
-
     # Extract final plan and constraints from the LLM response
     outfits_list = response.get('outfits')
     if not outfits_list:
@@ -134,9 +132,9 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     budget = response.get('max_budget')
     if not budget:
         budget = response.get('budget')
-        
+
     if not budget or budget == 0:
-        budget = 100000
+        budget = None
     user_constraints = response.get('hard_constraints', {})
 
     logging.info(f"LLM is READY_TO_GENERATE. Final Budget: {budget}. Generating {len(outfits_list)} outfits.")

@@ -44,7 +44,7 @@ input_gathering_schema = types.Schema(
     properties={
         "status": types.Schema(type=types.Type.STRING, description="The current status. Must be 'AWAITING_INPUT' if max_budget or sufficient hard_constraints are missing, or 'READY_TO_GENERATE' if all necessary inputs are gathered."),
         "missing_info": types.Schema(type=types.Type.STRING, description="A polite, conversational TEXTUAL message asking the user for the specific missing information (e.g., 'What is your maximum budget and what constraints do you have for the top?') This is the message presented to the user."),
-        "max_budget": types.Schema(type=types.Type.NUMBER, description="The maximum budget (€) extracted from the conversation history so far. Must be 0 if not yet specified or ambiguous."),
+        "max_budget": types.Schema(type=types.Type.NUMBER, description="The budget limit. CRITICAL: If the user says 'choose for me', 'cheap', 'not too much', or is in general vague, you MUST ESTIMATE a realistic price (e.g., 150). ONLY use 0 if the user explicitly says that budget is not a problem or is unlimited in general."),
         "hard_constraints": types.Schema(
             type=types.Type.OBJECT,
             description="All extracted hard constraints (color, material, brand) organized by category (top, bottom, shoes, etc.).",
@@ -56,7 +56,6 @@ input_gathering_schema = types.Schema(
                 "accessories": constraint_item_schema,
             }
         ),
-        "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
         "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
         "conversation_title": types.Schema(type=types.Type.STRING, description="A short, concise title for the conversation (max 5 words). Generate this ONLY if it is the first message in the conversation."),
         "num_outfits": types.Schema(type=types.Type.INTEGER, description="The number of outfit options the user wants to see (default 1, max 3). Extract this from the user's request."),
@@ -124,20 +123,19 @@ You are an expert conversational fashion stylist AI. Your primary goal is to fir
 
 Analyze the ENTIRE conversation history.
 
-Analyze the ENTIRE conversation history.
-
 If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
 
-Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
+Determine the 'max_budget' following this STRICT priority order:
 
-If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 100000, set the 'status' to 'READY_TO_GENERATE'
+1. If the user uses vague phrases like "not too much", "keep it cheap", "reasonable price", "appropriate for the occasion", or explicitly asks YOU to choose, you MUST ESTIMATE a concrete numerical value (e.g., 150, 300, 800) based on the occasion.
+   IN THIS CASE, DO NOT SET 'max_budget' TO 0. You MUST output a specific float number (e.g. 250).
 
-If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 100000, set the 'status' to 'READY_TO_GENERATE'
+2. ONLY If the user explicitly says that money are not a problem with states like "money is no object", "I have no budget limit", or "ignore the price", set 'max_budget' to 0 and set 'status' to 'READY_TO_GENERATE'.
 
-If the 'max_budget' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask for the budget also providing a tight budget range (in €) coherent with the user's request. It should also politely ask if the user has any OPTIONAL hard constraints (if not already stated) AND if they would like to see multiple outfit options (e.g., "Would you like to see 1, 2, or 3 options?").
+3. If the user provides a specific number (e.g., "200 euros"), use that number.
 
-Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
-
+4. If the 'max_budget' is totally missing, NOT mentioned, and NOT delegated to you (Step 1), set the 'status' to 'AWAITING_INPUT' and provide a specific question in 'missing_info'.
+   
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
 If the 'max_budget' is present, set the 'status' to 'READY_TO_GENERATE'.
@@ -177,14 +175,18 @@ Analyze the ENTIRE conversation history and the attached image.
 
 If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
 
-Determine if the following two pieces of information are explicitly present:
-a. Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
+a. Determine the 'max_budget' following this STRICT priority order:
 
-If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 100000.
+1. If the user uses vague phrases like "not too much", "keep it cheap", "reasonable price", "appropriate for the occasion", or explicitly asks YOU to choose, you MUST ESTIMATE a concrete numerical value (e.g., 150, 300, 800) based on the occasion.
+   IN THIS CASE, DO NOT SET 'max_budget' TO 0. You MUST output a specific float number (e.g. 250).
+
+2. ONLY If the user explicitly says that money are not a problem with states like "money is no object", "I have no budget limit", or "ignore the price", set 'max_budget' to 0 and set 'status' to 'READY_TO_GENERATE'.
+
+3. If the user provides a specific number (e.g., "200 euros"), use that number.
+
+4. If the 'max_budget' is totally missing, NOT mentioned, and NOT delegated to you (Step 1), set the 'status' to 'AWAITING_INPUT' and provide a specific question in 'missing_info'.
 
 b. The user's 'image_intent'.
-
-If the 'max_budget' or the 'user's intent' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask the missing piece of information, also providing a tight budget range (in €) coherent with the user's request if the budget is missing, and it should also politely ask if the user has any OPTIONAL hard constraints.
 
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
@@ -321,7 +323,6 @@ def generate_outfit_plan(
         print(f"Error during dialogue state check: {e}")
         return {'error': 'Failed to process dialogue state.'}
 
-    # ... [IL RESTO DEL CODICE RIMANE UGUALE] ...
 
     # --- GESTIONE RISPOSTA ---
     if dialogue_state.get('status') == 'AWAITING_INPUT':

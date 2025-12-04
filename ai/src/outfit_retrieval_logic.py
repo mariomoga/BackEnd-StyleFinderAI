@@ -51,7 +51,7 @@ def vector_search_rpc_candidates(client: Client, query_vector: np.ndarray, categ
         print(f"Supabase RPC search error for category '{category}': {e}")
         return pd.DataFrame()
 
-def search_product_candidates_with_vector_db(client: Client, parsed_item_list: List[dict], budget: float, gender: str) -> List[List[dict]] | List[dict]:
+def search_product_candidates_with_vector_db(client: Client, parsed_item_list: List[dict], budget: float|None, gender: str) -> List[List[dict]] | List[dict]:
     """
     Finds best product matches using a SINGLE batch vector search in Supabase.
     """
