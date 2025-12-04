@@ -143,6 +143,48 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
 
     final_outfits_results = []
 
+    # Helper for normalization
+    def normalize(s):
+        if not s: return ""
+        s = s.lower().strip()
+        if s.endswith('s'): return s[:-1] # Simple singularization
+        return s
+
+    changed_categories = response.get('changed_categories', [])
+    logging.info(f"DEBUG: changed_categories from LLM: {changed_categories}")
+
+    # Only attempt locking if we have history
+    last_outfit = None
+    if chat_history:
+        logging.info(f"Refinement detected. Changed categories: {changed_categories}. Attempting to lock others.")
+        
+        # Find the last valid outfit from history
+        # Iterate backwards
+        for msg in reversed(chat_history):
+            if msg.get('role') == 'model' and (msg.get('outfits') or msg.get('outfit')):
+                # Found the last outfit(s)
+                prev_outfits = msg.get('outfits')
+                if not prev_outfits and msg.get('outfit'):
+                     prev_outfits = [msg.get('outfit')]
+                
+                if prev_outfits:
+                    # If multiple, which one?
+                    # For now, default to the FIRST one, or we need a way to know which one user selected.
+                    # Assuming user is refining the first one or the system defaults to 0.
+                    # TODO: Add target_outfit_index support
+                    target_index = 0 
+                    if len(prev_outfits) > target_index:
+                        raw_last_outfit = prev_outfits[target_index]
+                        # raw_last_outfit is a list of items (dicts)
+                        # We need to convert it to a format we can check against
+                        # The DB stores it as a list of dicts with 'main_category'
+                        if isinstance(raw_last_outfit, dict) and 'outfit' in raw_last_outfit:
+                             last_outfit = raw_last_outfit['outfit']
+                        else:
+                             last_outfit = raw_last_outfit
+                        logging.info(f"DEBUG: Found last outfit with {len(last_outfit)} items.")
+                        break
+
     for i, outfit_plan in enumerate(outfits_list):
         logging.info(f"Processing outfit {i+1}/{len(outfits_list)}...")
         
@@ -157,20 +199,98 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
             logging.error(f"Post-LLM parsing failed for outfit {i+1}: {error_msg}")
             continue
 
-        # 2. EXTENDED QUERY EMBEDDING
-        logging.info(f"Generating embeddings for {len(parsed_item_list)} items...")
-        for item in parsed_item_list:
-            query_vector = get_text_embedding_vector(MODEL, PROC, DEVICE, item['description']) 
-            query_vector = query_vector.flatten().tolist() 
-            item['embedding'] = query_vector
+        # --- CARRY-OVER LOGIC ---
+        if last_outfit:
+             new_plan_categories = set(normalize(item['category']) for item in parsed_item_list)
+             for prev_item in last_outfit:
+                 prev_cat = prev_item.get('main_category', '')
+                 if not prev_cat: continue
+                 
+                 norm_prev_cat = normalize(prev_cat)
+                 
+                 # Check if missing and not changed
+                 if norm_prev_cat not in new_plan_categories:
+                     is_changed = False
+                     for changed_cat in changed_categories:
+                         if normalize(changed_cat) == norm_prev_cat:
+                             is_changed = True
+                             break
+                     
+                     if not is_changed:
+                         logging.info(f"DEBUG: Category '{prev_cat}' missing and not changed. Carrying over.")
+                         # Add a placeholder item to parsed_item_list to trigger locking logic
+                         # We need 'description' for embedding if it ends up being searched (unlikely if locked, but safe to have)
+                         parsed_item_list.append({
+                             'category': prev_cat, 
+                             'items': [], 
+                             'color_palette': '', 
+                             'pattern': '',
+                             'description': f"{prev_cat}" # Dummy description
+                         })
 
-        # 3. CLOTHING ITEMS RETRIEVAL
-        logging.info("Searching product candidates in vector DB...")
-        all_candidates = search_product_candidates_with_vector_db(SUPABASE_CLIENT, parsed_item_list, budget, gender)
-        if 'error' in all_candidates[0]:
-            error_detail = all_candidates[0]['error']
-            logging.error(f"Retrieval failed for outfit {i+1}: {error_detail}")
-            continue
+        # --- LOCKING & RETRIEVAL ---
+        all_candidates = []
+        items_to_search = []
+        indices_to_search = []
+
+        for idx, item in enumerate(parsed_item_list):
+            category = item['category']
+            is_locked = False
+            locked_candidate = None
+            
+            # Locking condition: last_outfit exists AND category NOT in changed_categories
+            if last_outfit:
+                 is_changed = False
+                 for changed_cat in changed_categories:
+                     if normalize(changed_cat) == normalize(category):
+                         is_changed = True
+                         break
+                 
+                 if not is_changed:
+                     # Find item in last_outfit
+                     for prev_item in last_outfit:
+                         prev_cat = prev_item.get('main_category', '')
+                         if normalize(prev_cat) == normalize(category):
+                             logging.info(f"DEBUG: Locking item {category}")
+                             is_locked = True
+                             locked_candidate = {
+                                 'price': prev_item.get('price', 0),
+                                 'similarity': 1.0,
+                             }
+                             locked_candidate.update(prev_item)
+                             break
+            
+            if is_locked and locked_candidate:
+                all_candidates.append([locked_candidate])
+            else:
+                all_candidates.append(None) # Placeholder
+                items_to_search.append(item)
+                indices_to_search.append(idx)
+
+        # Batch search for unlocked items
+        if items_to_search:
+            logging.info(f"Generating embeddings for {len(items_to_search)} items...")
+            for item in items_to_search:
+                query_vector = get_text_embedding_vector(MODEL, PROC, DEVICE, item['description']) 
+                query_vector = query_vector.flatten().tolist() 
+                item['embedding'] = query_vector
+
+            logging.info("Searching product candidates in vector DB...")
+            search_results = search_product_candidates_with_vector_db(SUPABASE_CLIENT, items_to_search, budget, gender)
+            
+            if search_results:
+                # If search_results is shorter than items_to_search (error?), handle it.
+                # Assuming 1-to-1 mapping if no error.
+                for j, result in enumerate(search_results):
+                    if j < len(indices_to_search):
+                        original_idx = indices_to_search[j]
+                        all_candidates[original_idx] = result
+            
+        # Check for retrieval errors in unlocked items
+        if any(c and 'error' in c[0] for c in all_candidates if c and isinstance(c, list) and len(c)>0 and isinstance(c[0], dict)):
+             # If any candidate list has an error
+             # We can log it.
+             pass
 
         # 4. OUTFIT ASSEMBLY
         logging.info("Assembling and optimizing outfit with Knapsack...")

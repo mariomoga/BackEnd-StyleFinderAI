@@ -108,12 +108,17 @@ outfit_schema = types.Schema(
                 "accessories": constraint_item_schema,
             }
         ),
+        "changed_categories": types.Schema(
+            type=types.Type.ARRAY,
+            items=types.Schema(type=types.Type.STRING),
+            description="A list of category names (e.g., 'top', 'shoes') that the user explicitly asked to change or refine. Leave empty if this is a new request or a complete overhaul."
+        ),
         "message": types.Schema(
             type=types.Type.STRING,
             description="A message for non-fashion related inquiries. MUST ONLY be present for guardrail messages."
         )
     },
-    required=["outfits", "max_budget"]
+    required=["outfits", "max_budget", "changed_categories"]
 )
 
 # --- 3. System Prompt and Guardrail ---
@@ -147,7 +152,18 @@ ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and gen
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
 The final output should be a list of full outfits in the 'outfits' field. Each outfit should include at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
 
+[REFINE & MODIFY LOGIC]
+If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
+1.  **Identify Changed Categories:** Populate the 'changed_categories' list. THIS IS CRITICAL.
+    *   **REFINE/MODIFY:** If the user changes a specific item, list ONLY that category (e.g. `['shoes']`). **WARNING: If you do not list the category here, the system will LOCK the previous item and your change will be IGNORED.**
+    *   **ADD ITEM/CHANGE BUDGET:** If the user ONLY adds a new item or changes the budget, leave `changed_categories` EMPTY `[]`.
+    *   **NEW REQUEST/OVERHAUL:** If the user asks for a completely new outfit or different style, list **ALL** categories in `changed_categories` (e.g. `['top', 'bottom', 'shoes', 'accessories']`) to force a full regeneration.
+2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
+3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
+4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
+
 If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
+OTHERWISE, GENERATE EXACTLY 1 OUTFIT. Do not generate more than 1 unless explicitly asked.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -197,6 +213,19 @@ b. If the intent was to find an outfit in the same style or aesthetic as the ima
 ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case.
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
 The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+
+If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
+OTHERWISE, GENERATE EXACTLY 1 OUTFIT. Do not generate more than 1 unless explicitly asked.
+
+[REFINE & MODIFY LOGIC]
+If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
+1.  **Identify Changed Categories:** Populate the 'changed_categories' list.
+    *   **REFINE/MODIFY:** If the user changes a specific item, list ONLY that category (e.g. `['shoes']`).
+    *   **ADD ITEM/CHANGE BUDGET:** If the user ONLY adds a new item or changes the budget, leave `changed_categories` EMPTY `[]`.
+    *   **NEW REQUEST/OVERHAUL:** If the user asks for a completely new outfit or different style, list **ALL** categories in `changed_categories` (e.g. `['top', 'bottom', 'shoes', 'accessories']`) to force a full regeneration.
+2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
+3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
+4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -312,7 +341,8 @@ def generate_outfit_plan(
             config = types.GenerateContentConfig(
                 system_instruction = base_prompt,
                 response_mime_type = "application/json",
-                response_schema = input_gathering_schema
+                response_schema = input_gathering_schema,
+                temperature = 1.5
             )
         )
         dialogue_state = response.parsed
@@ -347,7 +377,8 @@ def generate_outfit_plan(
                 config = types.GenerateContentConfig(
                     system_instruction = base_prompt,
                     response_mime_type = "application/json",
-                    response_schema = outfit_schema
+                    response_schema = outfit_schema,
+                    temperature = 1.5   
                 )
             )
             final_data = final_response.parsed
@@ -360,6 +391,7 @@ def generate_outfit_plan(
                 'outfits': final_data.get('outfits'),
                 'budget': final_data.get('max_budget'),
                 'hard_constraints': final_data.get('hard_constraints'),
+                'changed_categories': final_data.get('changed_categories', []),
                 'history': chat_history,
                 'conversation_title': dialogue_state.get('conversation_title')
             }
