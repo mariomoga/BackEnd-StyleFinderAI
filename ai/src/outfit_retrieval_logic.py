@@ -89,7 +89,7 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
             return [{"error": "No candidates found for any item."}]
 
         flat_results = pd.DataFrame(response.data)
-
+        
         all_candidates = []
 
         for i in range(len(parsed_item_list)):

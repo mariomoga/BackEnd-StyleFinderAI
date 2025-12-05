@@ -378,7 +378,9 @@ def get_messages():
 
 @app.route('/api/messages/send', methods=['POST', 'PUT'])
 def send_message():
-    user_id = current_user.get_id()
+    is_authenticated = current_user.is_authenticated
+    user_id = int(current_user.get_id()) if is_authenticated else None
+    
     try:
         image = None
         if request.is_json:
@@ -396,45 +398,84 @@ def send_message():
         image_url = None
         if image:
             image_id = str(uuid.uuid4())
-            image_url = upload_image(image_id, image)
+            if is_authenticated:
+                image_url = upload_image(image_id, image)
+            else:
+                # Per utenti non autenticati, creiamo un URL base64 temporaneo
+                image_url = f"data:image/jpeg;base64,{base64.b64encode(image).decode('utf-8')}"
 
         image_data = None
         if image_id:
             image_data = (image_id, image)
 
-        if not conv_id:
-            user_id = int(current_user.get_id())
-            
-            # First chat: Call AI first to get title and response
-            chat_history = []
-            past_images = {}
-            
-            output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
-            
-            conv_title = output.get('conversation_title')
-            if not conv_title:
-                conv_title = title_generator.generate_title(msg_text)
-
-            conv_id = DBManager.create_conversation_with_message(user_id, conv_title, msg_text, image_id=image_id)
-            if conv_id is None:
-                return {"error": "Error while creating a new conversation"}, 500
+        # === UTENTE NON AUTENTICATO ===
+        if not is_authenticated:
+            if not conv_id:
+                # Prima chat: genera un ID temporaneo
+                conv_id = f"temp_{uuid.uuid4()}"
+                chat_history = []
+                past_images = {}
                 
-
-            cache[conv_id] = (chat_history, past_images)
-
-        else:
-            conv_title = None
-            success = DBManager.add_message_to_conversation(conv_id, msg_text, image_id=image_id)
-            if not success:
-                return {"error": "Unable to save the message (Not authorized or generic db error)"}, 403
-
-            if conv_id in cache:
-                chat_history, past_images = cache[conv_id]
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+                
+                conv_title = output.get('conversation_title')
+                if not conv_title:
+                    conv_title = title_generator.generate_title(msg_text)
+                
+                # Salva in memoria (non nel DB)
+                not_auth_convs[conv_id] = {
+                    'chat_history': chat_history,
+                    'past_images': past_images,
+                    'title': conv_title
+                }
             else:
-                chat_history, past_images = load_messages(conv_id, user_id)
+                # Conversazione esistente in memoria
+                conv_title = None
+                if conv_id not in not_auth_convs:
+                    return {"error": "Conversation not found"}, 404
+                
+                conv_data = not_auth_convs[conv_id]
+                chat_history = conv_data['chat_history']
+                past_images = conv_data['past_images']
+                
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+            
+            # Aggiorna la history in memoria
+            if image_id and image:
+                past_images[image_id] = image
+
+        # === UTENTE AUTENTICATO ===
+        else:
+            if not conv_id:
+                # First chat: Call AI first to get title and response
+                chat_history = []
+                past_images = {}
+                
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+                
+                conv_title = output.get('conversation_title')
+                if not conv_title:
+                    conv_title = title_generator.generate_title(msg_text)
+
+                conv_id = DBManager.create_conversation_with_message(user_id, conv_title, msg_text, image_id=image_id)
+                if conv_id is None:
+                    return {"error": "Error while creating a new conversation"}, 500
+
                 cache[conv_id] = (chat_history, past_images)
 
-            output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+            else:
+                conv_title = None
+                success = DBManager.add_message_to_conversation(conv_id, msg_text, image_id=image_id)
+                if not success:
+                    return {"error": "Unable to save the message (Not authorized or generic db error)"}, 403
+
+                if conv_id in cache:
+                    chat_history, past_images = cache[conv_id]
+                else:
+                    chat_history, past_images = load_messages(conv_id, user_id)
+                    cache[conv_id] = (chat_history, past_images)
+
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
 
         status = output.get('status')
         if not status:
@@ -442,10 +483,12 @@ def send_message():
 
         if status == "AWAITING_INPUT" or status == "Guardrail":
             text = output.get("prompt_to_user", output.get("message"))
-            DBManager.add_simple_ai_response(conv_id, text, status)
+            if is_authenticated:
+                DBManager.add_simple_ai_response(conv_id, text, status)
         elif status == "COMPLETED":
             text = output.get("message")
-            DBManager.add_ai_response(conv_id, output)
+            if is_authenticated:
+                DBManager.add_ai_response(conv_id, output)
         elif status == "RESOURCE_EXHAUSTED":
             text = "Gemini resources exhausted"
         else:
