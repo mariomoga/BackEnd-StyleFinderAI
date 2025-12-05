@@ -72,14 +72,22 @@ except Exception as e:
 
 FASHION_CATEGORIES = ['top', 'bottom', 'dresses', 'outerwear', 'swimwear', 'shoes', 'accessories']
 
-def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str, Any]], user_id_key: int | None, image_data:tuple[str, bytes] | None, past_images:dict[str, bytes] | None, selected_outfit_index: int | None = None, selected_message_id: str | None = None) -> Dict[str, Any]:
+def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str, Any]], user_id_key: int | None, image_data:tuple[str, bytes] | None, past_images:dict[str, bytes] | None, selected_outfit_index: int | None = None, selected_message_id: str | None = None, guest_gender: str | None = None) -> Dict[str, Any]:
     
     #CRITICAL: IMAGE_DATA NEEDS TO BE ALREADY ENCODED IN base64 BY THE FRONTEND
     #BEFORE GETTING PASSED TO THIS METHOD, ALSO THE mimeType NEEDS TO BE PASSED
 
     #THIS PROBABLY NEEDS TO BE DONE AS SOON AS THE USER LOGS IN AND THEN PASSED TO THE FUNCTION
     #DON'T KNOW IF THAT'S THE CASE SO I'LL LEAVE IT AS IS FOR NOW
-    gender = current_user.gender
+    # Use guest_gender if provided (for non-authenticated users), otherwise use current_user.gender
+    gender = guest_gender
+    if not gender:
+        try:
+            if current_user and current_user.is_authenticated:
+                gender = current_user.gender
+        except Exception:
+            gender = None
+    
     if user_id_key:
         #get_user_preferences FOR NOW QUERIES THE MOCK-UP USER DB I MADE
         #NEEDS TO BE CHANGED SO THAT IT QUERIES THE RIGHT DB OR REMOVED

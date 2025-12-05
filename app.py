@@ -384,6 +384,7 @@ def send_message():
     try:
         image = None
         selected_outfit_index = None
+        guest_gender = None  # Gender for non-authenticated users
         
         if request.is_json:
             data = request.get_json() or {}
@@ -392,12 +393,14 @@ def send_message():
             conv_id = data.get('conv_id')
             selected_outfit_index = data.get('selected_outfit_index')
             selected_message_id = data.get('selected_message_id') # Extract from JSON
+            guest_gender = data.get('gender')  # Get gender from request body
         else:
             print(f"DEBUG: Form Request Data: {request.form}")
             msg_text = request.form.get('message')
             conv_id = request.form.get('conv_id')
             selected_outfit_index = request.form.get('selected_outfit_index')
             selected_message_id = request.form.get('selected_message_id') # Extract from FormData
+            guest_gender = request.form.get('gender')  # Get gender from form data
             image_uploaded = request.files.get('image')
             if image_uploaded:
                 image = compress_image(image_uploaded.read())
@@ -431,7 +434,7 @@ def send_message():
                 chat_history = []
                 past_images = {}
                 
-                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index)
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index, guest_gender=guest_gender)
                 
                 conv_title = output.get('conversation_title')
                 if not conv_title:
@@ -441,7 +444,8 @@ def send_message():
                 not_auth_convs[conv_id] = {
                     'chat_history': chat_history,
                     'past_images': past_images,
-                    'title': conv_title
+                    'title': conv_title,
+                    'gender': guest_gender  # Save gender for the conversation
                 }
             else:
                 # Conversazione esistente in memoria
@@ -452,8 +456,10 @@ def send_message():
                 conv_data = not_auth_convs[conv_id]
                 chat_history = conv_data['chat_history']
                 past_images = conv_data['past_images']
+                # Use saved gender from conversation if not provided in request
+                saved_gender = conv_data.get('gender') or guest_gender
                 
-                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index)
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index, guest_gender=saved_gender)
             
             # Aggiorna la history in memoria
             if image_id and image:
@@ -542,11 +548,11 @@ def send_message():
         return {"error": str(e)}, 500
 
 @app.route('/api/outfit/explain', methods=['POST'])
-@login_required
 def explain_outfit():
     """
     Endpoint to generate an explanation for a specific outfit on demand.
     Expects JSON: { "user_prompt": "...", "outfit_data": [...] }
+    Works for both authenticated users and guests.
     """
     try:
         data = request.get_json() or {}
