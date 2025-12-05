@@ -15,7 +15,8 @@ def format_results(outfit_list):
                 'image_link': item_match.get('image_link'),
                 'price': item_match.get('price'),
                 'brand': item_match.get('brand'),
-                'material': item_match.get('material')
+                'material': item_match.get('material'),
+                'description': item_match.get('schema_description'),
             })
         return formatted_list
 
