@@ -459,7 +459,6 @@ def send_message():
                 "outfit" : output.get("outfit", []),
                 "outfits" : output.get("outfits", []),
                 "message" : text,
-                "explanation": output.get("explanation"),
             }
         }
         if conv_title:
