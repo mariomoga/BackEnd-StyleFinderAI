@@ -44,7 +44,7 @@ input_gathering_schema = types.Schema(
     properties={
         "status": types.Schema(type=types.Type.STRING, description="The current status. Must be 'AWAITING_INPUT' if max_budget or sufficient hard_constraints are missing, or 'READY_TO_GENERATE' if all necessary inputs are gathered."),
         "missing_info": types.Schema(type=types.Type.STRING, description="A polite, conversational TEXTUAL message asking the user for the specific missing information (e.g., 'What is your maximum budget and what constraints do you have for the top?') This is the message presented to the user."),
-        "max_budget": types.Schema(type=types.Type.NUMBER, description="The budget limit. CRITICAL: If the user says 'choose for me', 'cheap', 'not too much', or is in general vague, you MUST ESTIMATE a realistic price (e.g., 150). ONLY use 0 if the user explicitly says that budget is not a problem or is unlimited in general."),
+        "max_budget": types.Schema(type=types.Type.NUMBER, description="The maximum budget (€) extracted from the conversation history so far. Must be 0 if not yet specified or ambiguous."),
         "hard_constraints": types.Schema(
             type=types.Type.OBJECT,
             description="All extracted hard constraints (color, material, brand) organized by category (top, bottom, shoes, etc.).",
@@ -56,6 +56,7 @@ input_gathering_schema = types.Schema(
                 "accessories": constraint_item_schema,
             }
         ),
+        "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
         "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
         "conversation_title": types.Schema(type=types.Type.STRING, description="A short, concise title for the conversation (max 5 words). Generate this ONLY if it is the first message in the conversation."),
         "num_outfits": types.Schema(type=types.Type.INTEGER, description="The number of outfit options the user wants to see (default 1, max 3). Extract this from the user's request."),
@@ -107,12 +108,17 @@ outfit_schema = types.Schema(
                 "accessories": constraint_item_schema,
             }
         ),
+        "changed_categories": types.Schema(
+            type=types.Type.ARRAY,
+            items=types.Schema(type=types.Type.STRING),
+            description="A list of category names (e.g., 'top', 'shoes') that the user explicitly asked to change or refine. Leave empty if this is a new request or a complete overhaul."
+        ),
         "message": types.Schema(
             type=types.Type.STRING,
             description="A message for non-fashion related inquiries. MUST ONLY be present for guardrail messages."
         )
     },
-    required=["outfits", "max_budget"]
+    required=["outfits", "max_budget", "changed_categories"]
 )
 
 # --- 3. System Prompt and Guardrail ---
@@ -123,19 +129,19 @@ You are an expert conversational fashion stylist AI. Your primary goal is to fir
 
 Analyze the ENTIRE conversation history.
 
+Analyze the ENTIRE conversation history.
+
 If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
 
-Determine the 'max_budget' following this STRICT priority order:
+Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
 
-1. If the user uses vague phrases like "not too much", "keep it cheap", "reasonable price", "appropriate for the occasion", or explicitly asks YOU to choose, you MUST ESTIMATE a concrete numerical value (e.g., 150, 300, 800) based on the occasion.
-   IN THIS CASE, DO NOT SET 'max_budget' TO 0. You MUST output a specific float number (e.g. 250).
 
-2. ONLY If the user explicitly says that money are not a problem with states like "money is no object", "I have no budget limit", or "ignore the price", set 'max_budget' to 0 and set 'status' to 'READY_TO_GENERATE'.
+If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 0, set the 'status' to 'READY_TO_GENERATE'
 
-3. If the user provides a specific number (e.g., "200 euros"), use that number.
+If the 'max_budget' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask for the budget also providing a tight budget range (in €) coherent with the user's request. It should also politely ask if the user has any OPTIONAL hard constraints (if not already stated) AND if they would like to see multiple outfit options (e.g., "Would you like to see 1, 2, or 3 options?").
 
-4. If the 'max_budget' is totally missing, NOT mentioned, and NOT delegated to you (Step 1), set the 'status' to 'AWAITING_INPUT' and provide a specific question in 'missing_info'.
-   
+Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
+
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
 If the 'max_budget' is present, set the 'status' to 'READY_TO_GENERATE'.
@@ -145,11 +151,22 @@ ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and gen
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
 The final output should be a list of full outfits in the 'outfits' field. Each outfit should include at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
 
+[REFINE & MODIFY LOGIC]
+If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
+1.  **Identify Changed Categories:** Populate the 'changed_categories' list. THIS IS CRITICAL.
+    *   **REFINE/MODIFY:** If the user changes a specific item, list ONLY that category (e.g. `['shoes']`). **WARNING: If you do not list the category here, the system will LOCK the previous item and your change will be IGNORED.**
+    *   **ADD ITEM/CHANGE BUDGET:** If the user ONLY adds a new item or changes the budget, leave `changed_categories` EMPTY `[]`.
+    *   **NEW REQUEST/OVERHAUL:** If the user asks for a completely new outfit or different style, list **ALL** categories in `changed_categories` (e.g. `['top', 'bottom', 'shoes', 'accessories']`) to force a full regeneration.
+2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
+3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
+4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
+
 If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
+OTHERWISE, GENERATE EXACTLY 1 OUTFIT. Do not generate more than 1 unless explicitly asked.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
-DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY.
+DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY. This does not apply to 'accessories_schema'.
 
 If constraints are missing, assume flexibility and generate a well-curated outfit that fits the occasion and budget. 
 
@@ -175,18 +192,14 @@ Analyze the ENTIRE conversation history and the attached image.
 
 If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
 
-a. Determine the 'max_budget' following this STRICT priority order:
+Determine if the following two pieces of information are explicitly present:
+a. Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
 
-1. If the user uses vague phrases like "not too much", "keep it cheap", "reasonable price", "appropriate for the occasion", or explicitly asks YOU to choose, you MUST ESTIMATE a concrete numerical value (e.g., 150, 300, 800) based on the occasion.
-   IN THIS CASE, DO NOT SET 'max_budget' TO 0. You MUST output a specific float number (e.g. 250).
-
-2. ONLY If the user explicitly says that money are not a problem with states like "money is no object", "I have no budget limit", or "ignore the price", set 'max_budget' to 0 and set 'status' to 'READY_TO_GENERATE'.
-
-3. If the user provides a specific number (e.g., "200 euros"), use that number.
-
-4. If the 'max_budget' is totally missing, NOT mentioned, and NOT delegated to you (Step 1), set the 'status' to 'AWAITING_INPUT' and provide a specific question in 'missing_info'.
+If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 0.
 
 b. The user's 'image_intent'.
+
+If the 'max_budget' or the 'user's intent' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask the missing piece of information, also providing a tight budget range (in €) coherent with the user's request if the budget is missing, and it should also politely ask if the user has any OPTIONAL hard constraints.
 
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
@@ -199,6 +212,19 @@ b. If the intent was to find an outfit in the same style or aesthetic as the ima
 ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case.
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
 The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+
+If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
+OTHERWISE, GENERATE EXACTLY 1 OUTFIT. Do not generate more than 1 unless explicitly asked.
+
+[REFINE & MODIFY LOGIC]
+If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
+1.  **Identify Changed Categories:** Populate the 'changed_categories' list.
+    *   **REFINE/MODIFY:** If the user changes a specific item, list ONLY that category (e.g. `['shoes']`).
+    *   **ADD ITEM/CHANGE BUDGET:** If the user ONLY adds a new item or changes the budget, leave `changed_categories` EMPTY `[]`.
+    *   **NEW REQUEST/OVERHAUL:** If the user asks for a completely new outfit or different style, list **ALL** categories in `changed_categories` (e.g. `['top', 'bottom', 'shoes', 'accessories']`) to force a full regeneration.
+2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
+3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
+4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -314,7 +340,8 @@ def generate_outfit_plan(
             config = types.GenerateContentConfig(
                 system_instruction = base_prompt,
                 response_mime_type = "application/json",
-                response_schema = input_gathering_schema
+                response_schema = input_gathering_schema,
+                temperature = 1.5
             )
         )
         dialogue_state = response.parsed
@@ -323,6 +350,7 @@ def generate_outfit_plan(
         print(f"Error during dialogue state check: {e}")
         return {'error': 'Failed to process dialogue state.'}
 
+    # ... [IL RESTO DEL CODICE RIMANE UGUALE] ...
 
     # --- GESTIONE RISPOSTA ---
     if dialogue_state.get('status') == 'AWAITING_INPUT':
@@ -348,7 +376,8 @@ def generate_outfit_plan(
                 config = types.GenerateContentConfig(
                     system_instruction = base_prompt,
                     response_mime_type = "application/json",
-                    response_schema = outfit_schema
+                    response_schema = outfit_schema,
+                    temperature = 1.5   
                 )
             )
             final_data = final_response.parsed
@@ -361,6 +390,7 @@ def generate_outfit_plan(
                 'outfits': final_data.get('outfits'),
                 'budget': final_data.get('max_budget'),
                 'hard_constraints': final_data.get('hard_constraints'),
+                'changed_categories': final_data.get('changed_categories', []),
                 'history': chat_history,
                 'conversation_title': dialogue_state.get('conversation_title')
             }

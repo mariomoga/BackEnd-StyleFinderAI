@@ -508,6 +508,9 @@ def send_message():
         if conv_title:
             response['conv_title'] = conv_title
 
+        # Invalidate cache to force reload from DB on next request (ensures 'outfits' is fresh)
+        cache.pop(conv_id, None)
+
         return response, 200
 
     except Exception as e:
@@ -551,6 +554,9 @@ def load_messages(conv_id, user_id):
 
         if message.get("outfit"):
             simple_message["outfit"] = message["outfit"]
+        
+        if message.get("outfits"):
+            simple_message["outfits"] = message["outfits"]
 
         raw_url = message.get("image_id")
 
