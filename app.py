@@ -383,16 +383,31 @@ def send_message():
     
     try:
         image = None
+        selected_outfit_index = None
+        
         if request.is_json:
             data = request.get_json() or {}
+            print(f"DEBUG: JSON Request Data: {data}")
             msg_text = data.get('message')
             conv_id = data.get('conv_id')
+            selected_outfit_index = data.get('selected_outfit_index')
+            selected_message_id = data.get('selected_message_id') # Extract from JSON
         else:
+            print(f"DEBUG: Form Request Data: {request.form}")
             msg_text = request.form.get('message')
             conv_id = request.form.get('conv_id')
+            selected_outfit_index = request.form.get('selected_outfit_index')
+            selected_message_id = request.form.get('selected_message_id') # Extract from FormData
             image_uploaded = request.files.get('image')
             if image_uploaded:
                 image = compress_image(image_uploaded.read())
+
+        # Convert selected_outfit_index to int if present
+        if selected_outfit_index is not None:
+            try:
+                selected_outfit_index = int(selected_outfit_index)
+            except ValueError:
+                selected_outfit_index = None
 
         image_id = None
         image_url = None
@@ -416,7 +431,7 @@ def send_message():
                 chat_history = []
                 past_images = {}
                 
-                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index)
                 
                 conv_title = output.get('conversation_title')
                 if not conv_title:
@@ -438,7 +453,7 @@ def send_message():
                 chat_history = conv_data['chat_history']
                 past_images = conv_data['past_images']
                 
-                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index)
             
             # Aggiorna la history in memoria
             if image_id and image:
@@ -451,7 +466,7 @@ def send_message():
                 chat_history = []
                 past_images = {}
                 
-                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index)
                 
                 conv_title = output.get('conversation_title')
                 if not conv_title:
@@ -475,7 +490,7 @@ def send_message():
                     chat_history, past_images = load_messages(conv_id, user_id)
                     cache[conv_id] = (chat_history, past_images)
 
-                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images)
+                output = outfit_recommendation_handler(msg_text, chat_history, user_id, image_data=image_data, past_images=past_images, selected_outfit_index=selected_outfit_index, selected_message_id=selected_message_id)
 
         status = output.get('status')
         if not status:
@@ -485,14 +500,23 @@ def send_message():
             text = output.get("prompt_to_user", output.get("message"))
             if is_authenticated:
                 DBManager.add_simple_ai_response(conv_id, text, status)
-        elif status == "COMPLETED":
+        elif status == "COMPLETED" or status == "READY_TO_GENERATE":
             text = output.get("message")
             if is_authenticated:
-                DBManager.add_ai_response(conv_id, output)
+                new_ai_response_id = DBManager.add_ai_response(conv_id, output)
         elif status == "RESOURCE_EXHAUSTED":
             text = "Gemini resources exhausted"
         else:
             text = output.get("message")
+
+        # Update chat history
+        chat_history.append({'role': 'user', 'text': msg_text, 'image_id': image_id})
+        
+        ai_msg = {'role': 'model', 'text': text, 'outfits': output.get('outfits', []), 'outfit_plan': output.get('outfit_plan')}
+        if is_authenticated and 'new_ai_response_id' in locals():
+            ai_msg['message_id'] = new_ai_response_id
+            
+        chat_history.append(ai_msg)
 
         response = {
             "status" : status,
@@ -503,7 +527,8 @@ def send_message():
                 "outfits" : output.get("outfits", []),
                 "message" : text,
                 "explanation": output.get("explanation"),
-            }
+            },
+            "message_id": new_ai_response_id if is_authenticated and 'new_ai_response_id' in locals() else None
         }
         if conv_title:
             response['conv_title'] = conv_title
@@ -549,7 +574,9 @@ def load_messages(conv_id, user_id):
     for message in messages:
         simple_message = {
             "role": message.get("role"),
+            "role": message.get("role"),
             "text": message.get("text"),
+            "message_id": message.get("message_id")
         }
 
         if message.get("outfit"):

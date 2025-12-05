@@ -142,8 +142,6 @@ If the 'max_budget' is missing, set the 'status' to 'AWAITING_INPUT' and provide
 
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
-Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
-
 If the 'max_budget' is present, set the 'status' to 'READY_TO_GENERATE'.
 
 [STEP 2: OUTFIT GENERATION (Use OutfitSchema)]
@@ -161,8 +159,9 @@ If the user asks to change or refine a specific item in the previous outfit (e.g
 3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
 4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
 
-If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
-OTHERWISE, GENERATE EXACTLY 1 OUTFIT. Do not generate more than 1 unless explicitly asked.
+CRITICAL: When performing a refinement (i.e., 'changed_categories' is NOT empty), you MUST generate EXACTLY ONE (1) outfit plan in the 'outfits' list.
+EXCEPTION: Only generate multiple outfits if the user EXPLICITLY asks for "options" or a specific number (e.g. "show me 2 options") IN THE CURRENT MESSAGE.
+IGNORE any "num_outfits" or "options" requests from previous messages in the history. Refinement defaults to 1.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -213,8 +212,9 @@ ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and gen
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
 The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
 
-If the user requested multiple options (or 'num_outfits' > 1), generate that many DISTINCT outfit plans in the 'outfits' list. Ensure they are stylistically different if possible.
-OTHERWISE, GENERATE EXACTLY 1 OUTFIT. Do not generate more than 1 unless explicitly asked.
+CRITICAL: When performing a refinement (i.e., 'changed_categories' is NOT empty), you MUST generate EXACTLY ONE (1) outfit plan in the 'outfits' list.
+EXCEPTION: Only generate multiple outfits if the user EXPLICITLY asks for "options" or a specific number (e.g. "show me 2 options") IN THE CURRENT MESSAGE.
+IGNORE any "num_outfits" or "options" requests from previous messages in the history. Refinement defaults to 1.
 
 [REFINE & MODIFY LOGIC]
 If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:

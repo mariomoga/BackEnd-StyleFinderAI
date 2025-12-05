@@ -72,7 +72,7 @@ except Exception as e:
 
 FASHION_CATEGORIES = ['top', 'bottom', 'dresses', 'outerwear', 'swimwear', 'shoes', 'accessories']
 
-def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str, Any]], user_id_key: int | None, image_data:tuple[str, bytes] | None, past_images:dict[str, bytes] | None) -> Dict[str, Any]:
+def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str, Any]], user_id_key: int | None, image_data:tuple[str, bytes] | None, past_images:dict[str, bytes] | None, selected_outfit_index: int | None = None, selected_message_id: str | None = None) -> Dict[str, Any]:
     
     #CRITICAL: IMAGE_DATA NEEDS TO BE ALREADY ENCODED IN base64 BY THE FRONTEND
     #BEFORE GETTING PASSED TO THIS METHOD, ALSO THE mimeType NEEDS TO BE PASSED
@@ -89,6 +89,38 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         user_preferences = None
 
     print(user_preferences, gender)
+
+    # 1. Recupera items dall'outfit precedente (se esiste) per il refinement
+    target_outfit_items = []
+    
+    # Logic to find the target outfit based on selection
+    target_outfit_message = None
+
+    if selected_message_id:
+        # Find the specific message in history
+        for msg in reversed(chat_history):
+            if str(msg.get('message_id')) == str(selected_message_id) and msg.get('role') == 'model':
+                target_outfit_message = msg
+                break
+    elif chat_history:
+        # Default to the last AI message if no specific message selected
+        for msg in reversed(chat_history):
+            if msg.get('role') == 'model':
+                target_outfit_message = msg
+                break
+
+    if target_outfit_message:
+        outfits = target_outfit_message.get('outfits', [])
+        # If selected_outfit_index is provided, use it. Otherwise default to 0 (first outfit)
+        target_index = selected_outfit_index if selected_outfit_index is not None else 0
+        
+        if outfits and len(outfits) > target_index:
+            target_outfit_items = outfits[target_index].get('outfit', [])
+            print(f"DEBUG: Using items from message {target_outfit_message.get('message_id')}, outfit index {target_index} for refinement.")
+        else:
+             print(f"DEBUG: Target outfit index {target_index} not found in message {target_outfit_message.get('message_id')}.")
+    else:
+        print("DEBUG: No suitable previous outfit found for refinement.")
 
     # 1. USER'S QUERY HANDLING
     logging.info("--- Sending request to Gemini for state transition... ---")
@@ -151,37 +183,37 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     changed_categories = response.get('changed_categories', [])
     logging.info(f"DEBUG: changed_categories from LLM: {changed_categories}")
 
-    # Only attempt locking if we have history
-    last_outfit = None
-    if chat_history:
-        logging.info(f"Refinement detected. Changed categories: {changed_categories}. Attempting to lock others.")
+    # --- SAFEGUARD: Enforce single outfit for refinement unless explicitly requested ---
+    if changed_categories and len(outfits_list) > 1:
+        # Simple heuristic: check if user asked for "options" or numbers in the current prompt
+        keywords = ["option", "choice", "variant", " 1 ", " 2 ", " 3 ", " one ", " two ", " three "]
+        is_explicit_request = any(k in user_prompt.lower() for k in keywords)
         
-        # Find the last valid outfit from history
-        # Iterate backwards
-        for msg in reversed(chat_history):
-            if msg.get('role') == 'model' and (msg.get('outfits') or msg.get('outfit')):
-                # Found the last outfit(s)
-                prev_outfits = msg.get('outfits')
-                if not prev_outfits and msg.get('outfit'):
-                     prev_outfits = [msg.get('outfit')]
-                
-                if prev_outfits:
-                    # If multiple, which one?
-                    # For now, default to the FIRST one, or we need a way to know which one user selected.
-                    # Assuming user is refining the first one or the system defaults to 0.
-                    # TODO: Add target_outfit_index support
-                    target_index = 0 
-                    if len(prev_outfits) > target_index:
-                        raw_last_outfit = prev_outfits[target_index]
-                        # raw_last_outfit is a list of items (dicts)
-                        # We need to convert it to a format we can check against
-                        # The DB stores it as a list of dicts with 'main_category'
-                        if isinstance(raw_last_outfit, dict) and 'outfit' in raw_last_outfit:
-                             last_outfit = raw_last_outfit['outfit']
-                        else:
-                             last_outfit = raw_last_outfit
-                        logging.info(f"DEBUG: Found last outfit with {len(last_outfit)} items.")
-                        break
+        if not is_explicit_request:
+            logging.info("DEBUG: Refinement detected without explicit option request. Enforcing single outfit.")
+            outfits_list = outfits_list[:1]
+
+    last_outfit = None
+    # Use the target_outfit_items we identified at the start of the function
+    if target_outfit_items:
+         last_outfit = target_outfit_items
+         logging.info(f"DEBUG: last_outfit set for locking: {len(last_outfit)} items.")
+    else:
+         # Fallback: check if response has it (unlikely but safe)
+         if response.get('previous_outfit_items'):
+             last_outfit = response.get('previous_outfit_items')
+             logging.info(f"DEBUG: last_outfit set from response: {len(last_outfit)} items.")
+         else:
+             logging.info("DEBUG: No previous outfit items found for locking.")
+
+    # 2. Setup locking logic
+    locked_items = []
+    if last_outfit:
+        # ... (existing locking logic)
+        # The DB stores it as a list of dicts with 'main_category'
+        if isinstance(last_outfit, dict) and 'outfit' in last_outfit:
+             last_outfit = last_outfit['outfit']
+        logging.info(f"DEBUG: Found last outfit with {len(last_outfit)} items.")
 
     for i, outfit_plan in enumerate(outfits_list):
         logging.info(f"Processing outfit {i+1}/{len(outfits_list)}...")
