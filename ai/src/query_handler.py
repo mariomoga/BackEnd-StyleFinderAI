@@ -16,7 +16,7 @@ item_schema = types.Schema(
 # Define the schema for a category (e.g., "top")
 category_schema = types.Schema(
     type=types.Type.OBJECT,
-    description="A collection of item suggestions for a specific clothing category. If accessory limit to sunglasses, caps/hats or simple jewelry.",
+    description="A collection of item suggestions for a specific clothing category. If 'accessories' limit to sunglasses, caps/hats, scarves, watchesor simple jewelry.",
     properties={
         "color_palette": types.Schema(type=types.Type.STRING, description="A specific color or color description (e.g., 'sky blue', 'dark indigo')."),
         "pattern": types.Schema(type=types.Type.STRING, description="A specific pattern (e.g., 'solid', 'striped', 'gingham')."),
@@ -77,6 +77,7 @@ outfit_categories_schema = types.Schema(
         "swimwear": category_schema,
         "shoes": category_schema,
         "accessories": category_schema,
+        "budget": types.Schema(type=types.Type.NUMBER, description="The specific maximum budget for this individual outfit option, if different from the global budget."),
     },
 )
 
@@ -146,8 +147,18 @@ If the 'max_budget' is present, set the 'status' to 'READY_TO_GENERATE'.
 
 [STEP 2: OUTFIT GENERATION (Use OutfitSchema)]
 ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case. 
+
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
-The final output should be a list of full outfits in the 'outfits' field. Each outfit should include at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+
+An outfit should contain by default at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request. If the user is reqeusting specific clothing items it should include only those instead.
+
+The final output should be a list of outfits in the 'outfits' field.
+[TOTAL BUDGET LOGIC]
+If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 for 3 outfits'), you MUST:
+1. Divide the total specified budget by the number of desired outfits.
+2. Set the 'budget' field of EACH individual outfit to this calculated share.
+3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
+4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
 
 [REFINE & MODIFY LOGIC]
 If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
@@ -158,6 +169,7 @@ If the user asks to change or refine a specific item in the previous outfit (e.g
 2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
 3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
 4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
+5.  **Preserve Budget:** You MUST preserve the specific 'budget' of the outfit being refined in the new plan, unless the user explicitly asks to change the price/budget. Do not revert to the global budget if a specific one was set.
 
 CRITICAL: When performing a refinement (i.e., 'changed_categories' is NOT empty), you MUST generate EXACTLY ONE (1) outfit plan in the 'outfits' list.
 EXCEPTION: Only generate multiple outfits if the user EXPLICITLY asks for "options" or a specific number (e.g. "show me 2 options") IN THE CURRENT MESSAGE.
@@ -211,6 +223,14 @@ b. If the intent was to find an outfit in the same style or aesthetic as the ima
 ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case.
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
 The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+If the user requests multiple options with DIFFERENT price points (e.g. "one cheap, one expensive"), you MUST specify the 'budget' field INSIDE each specific outfit object in the 'outfits' list. This overrides the global 'max_budget' for that specific option.
+
+[TOTAL BUDGET LOGIC]
+If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 for 3 outfits'), you MUST:
+1. Divide the total specified budget by the number of desired outfits.
+2. Set the 'budget' field of EACH individual outfit to this calculated share.
+3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
+4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
 
 CRITICAL: When performing a refinement (i.e., 'changed_categories' is NOT empty), you MUST generate EXACTLY ONE (1) outfit plan in the 'outfits' list.
 EXCEPTION: Only generate multiple outfits if the user EXPLICITLY asks for "options" or a specific number (e.g. "show me 2 options") IN THE CURRENT MESSAGE.
@@ -225,6 +245,7 @@ If the user asks to change or refine a specific item in the previous outfit (e.g
 2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
 3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
 4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
+5.  **Preserve Budget:** You MUST preserve the specific 'budget' of the outfit being refined in the new plan, unless the user explicitly asks to change the price/budget. Do not revert to the global budget if a specific one was set.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 

@@ -237,6 +237,7 @@ def select_final_outfit_and_metrics(
     return {
         "outfit": outfit_to_display,
         "cost": round(display_cost, 2),
+        "budget": budget,
         "remaining_budget": round(final_remaining_budget, 2) if final_remaining_budget is not None else None,
         "message": message,
         "status_code": 200 # Indicate success, even if it's a partial outfit

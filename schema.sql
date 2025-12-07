@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS outfit_suggestion (
     ai_response_id INTEGER REFERENCES ai_responses(id) ON DELETE CASCADE,
     product_id INTEGER REFERENCES product_data(id) ON DELETE CASCADE,
     outfit_index INTEGER DEFAULT 0,
+    budget DECIMAL(10, 2), -- Storing per-outfit budget
     UNIQUE(ai_response_id, product_id, outfit_index)
 );
 

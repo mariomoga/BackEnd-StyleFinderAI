@@ -362,6 +362,7 @@ class DBManager:
                                         json_build_object(
                                             'outfit', items,
                                             'cost', cost,
+                                            'budget', budget, -- Retrieve stored budget
                                             'explanation', NULL -- Explanation is currently per-message in DB, not per outfit
                                         ) ORDER BY outfit_index
                                     )
@@ -382,7 +383,8 @@ class DBManager:
                                                     'description', pd.schema_description
                                                 )
                                             ) AS items,
-                                            SUM(pd.price) as cost
+                                            SUM(pd.price) as cost,
+                                            MAX(os.budget) as budget -- Since budget is replicated for items in same outfit, MAX/MIN is fine
                                         FROM outfit_suggestion os
                                         JOIN product_data pd ON os.product_id = pd.id
                                         WHERE os.ai_response_id = ar.id
@@ -514,13 +516,17 @@ class DBManager:
                         if not product_id:
                             continue
 
-                        # Inserisci il collegamento in outfit_suggestion con outfit_index
+                        # Inserisci il collegamento in outfit_suggestion con outfit_index e BUDGET
                         insert_suggestion_query = """
-                                                  INSERT INTO outfit_suggestion (ai_response_id, product_id, outfit_index)
-                                                  VALUES (%s, %s, %s)
+                                                  INSERT INTO outfit_suggestion (ai_response_id, product_id, outfit_index, budget)
+                                                  VALUES (%s, %s, %s, %s)
                                                   ON CONFLICT (ai_response_id, product_id, outfit_index) DO NOTHING; \
                                                   """
-                        cursor.execute(insert_suggestion_query, (new_ai_response_id, product_id, idx))
+                        # Extract budget from the outfit object (passed from app.py/LLM)
+                        # We use 0 as default if not present, similar to logic in app.py
+                        outfit_budget = outfit_obj.get('budget', 0)
+                        
+                        cursor.execute(insert_suggestion_query, (new_ai_response_id, product_id, idx, outfit_budget))
 
             # Conferma le modifiche (Commit)
             conn.commit()

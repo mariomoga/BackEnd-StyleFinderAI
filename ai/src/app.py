@@ -117,6 +117,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                 target_outfit_message = msg
                 break
 
+    target_outfit_budget = None 
     if target_outfit_message:
         outfits = target_outfit_message.get('outfits', [])
         # If selected_outfit_index is provided, use it. Otherwise default to 0 (first outfit)
@@ -124,7 +125,8 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         
         if outfits and len(outfits) > target_index:
             target_outfit_items = outfits[target_index].get('outfit', [])
-            print(f"DEBUG: Using items from message {target_outfit_message.get('message_id')}, outfit index {target_index} for refinement.")
+            target_outfit_budget = outfits[target_index].get('budget')
+            print(f"DEBUG: Using items from message {target_outfit_message.get('message_id')}, outfit index {target_index} for refinement. Budget: {target_outfit_budget}")
         else:
              print(f"DEBUG: Target outfit index {target_index} not found in message {target_outfit_message.get('message_id')}.")
     else:
@@ -133,7 +135,12 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     # 1. USER'S QUERY HANDLING
     logging.info("--- Sending request to Gemini for state transition... ---")
 
-    response = generate_outfit_plan(GEMINI_CLIENT, GEMINI_MODEL_NAME, user_prompt, chat_history, image_data, past_images, user_preferences, gender)
+    # Inject budget context if refining
+    final_prompt = user_prompt
+    if target_outfit_budget:
+        final_prompt += f"\n(System Note: Refining outfit option #{target_index+1} which has a specific budget of {target_outfit_budget}. PRESERVE this budget.)"
+
+    response = generate_outfit_plan(GEMINI_CLIENT, GEMINI_MODEL_NAME, final_prompt, chat_history, image_data, past_images, user_preferences, gender)
     status = response.get('status')
 
     # --- Status Check & Dialogue Termination ---
@@ -177,7 +184,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         budget = None
     user_constraints = response.get('hard_constraints', {})
 
-    logging.info(f"LLM is READY_TO_GENERATE. Final Budget: {budget}. Generating {len(outfits_list)} outfits.")
+    logging.info(f"LLM is READY_TO_GENERATE. Global Budget: {budget}. Generating {len(outfits_list)} outfits.")
 
     final_outfits_results = []
 
@@ -224,7 +231,15 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         logging.info(f"DEBUG: Found last outfit with {len(last_outfit)} items.")
 
     for i, outfit_plan in enumerate(outfits_list):
-        logging.info(f"Processing outfit {i+1}/{len(outfits_list)}...")
+        # --- BUDGET HANDLING ---
+        # 1. Check for specific outfit budget
+        current_outfit_budget = outfit_plan.get('budget', 0)
+        
+        # 2. Fallback to global budget if specific is missing/zero
+        if not current_outfit_budget or current_outfit_budget == 0:
+            current_outfit_budget = budget
+            
+        logging.info(f"Processing outfit {i+1}/{len(outfits_list)} with budget: {current_outfit_budget}...")
         
         parsed_item_list = parse_outfit_plan(outfit_plan, user_constraints)
 
@@ -314,7 +329,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                 item['embedding'] = query_vector
 
             logging.info("Searching product candidates in vector DB...")
-            search_results = search_product_candidates_with_vector_db(SUPABASE_CLIENT, items_to_search, budget, gender)
+            search_results = search_product_candidates_with_vector_db(SUPABASE_CLIENT, items_to_search, current_outfit_budget, gender)
             
             if search_results:
                 # If search_results is shorter than items_to_search (error?), handle it.
@@ -332,15 +347,15 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
 
         # 4. OUTFIT ASSEMBLY
         logging.info("Assembling outfit...")
-        (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, budget)
+        (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, current_outfit_budget)
         
-        final_result_single = select_final_outfit_and_metrics(all_candidates, budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
+        final_result_single = select_final_outfit_and_metrics(all_candidates, current_outfit_budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
         
         if 'error' in final_result_single:
              logging.error(f"Selection failed for outfit {i+1}: {final_result_single}")
              continue
         
-        logging.info(f"Outfit {i+1} result: Cost={final_result_single.get('cost')}, Budget={budget}, Remaining={final_result_single.get('remaining_budget')}")
+        logging.info(f"Outfit {i+1} result: Cost={final_result_single.get('cost')}, Budget={current_outfit_budget}, Remaining={final_result_single.get('remaining_budget')}")
         final_outfits_results.append(final_result_single)
 
     # Filter out over-budget outfits if we have at least one valid outfit

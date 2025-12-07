@@ -77,7 +77,7 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
             "search_outfits_batch",
             {
                 "queries": queries_payload,
-                "match_threshold": -1000.0,
+                "match_threshold": 0.1,
                 "match_count": 20,
                 "max_espense": budget,
                 "gender": gender
