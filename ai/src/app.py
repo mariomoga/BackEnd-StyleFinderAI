@@ -249,9 +249,16 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         # 1. Check for specific outfit budget
         current_outfit_budget = outfit_plan.get('budget', 0)
         
-        # 2. Fallback to global budget if specific is missing/zero
+        # 2. Fallback logic:
+        # If specific budget is missing/zero:
+        # A) If refining a specific outfit (REFINE_CURRENT) and we have its original budget (target_outfit_budget), use that.
+        # B) Otherwise, use the global budget.
         if not current_outfit_budget or current_outfit_budget == 0:
-            current_outfit_budget = budget
+            if refinement_type == 'REFINE_CURRENT' and target_outfit_budget:
+                 current_outfit_budget = target_outfit_budget
+                 logging.info(f"DEBUG: Using preserved budget {current_outfit_budget} from previous outfit for refinement.")
+            else:
+                 current_outfit_budget = budget
             
         logging.info(f"Processing outfit {i+1}/{len(outfits_list)} with budget: {current_outfit_budget}...")
         
