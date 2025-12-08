@@ -16,7 +16,7 @@ item_schema = types.Schema(
 # Define the schema for a category (e.g., "top")
 category_schema = types.Schema(
     type=types.Type.OBJECT,
-    description="A collection of item suggestions for a specific clothing category. If 'accessories' limit to sunglasses, caps/hats, scarves, watchesor simple jewelry.",
+    description="A collection of item suggestions for a specific clothing category. If 'accessories' limit to sunglasses, caps/hats, scarves, gloves, watches or simple jewelry.",
     properties={
         "color_palette": types.Schema(type=types.Type.STRING, description="A specific color or color description (e.g., 'sky blue', 'dark indigo')."),
         "pattern": types.Schema(type=types.Type.STRING, description="A specific pattern (e.g., 'solid', 'striped', 'gingham')."),
@@ -77,8 +77,23 @@ outfit_categories_schema = types.Schema(
         "swimwear": category_schema,
         "shoes": category_schema,
         "accessories": category_schema,
-        "budget": types.Schema(type=types.Type.NUMBER, description="The specific maximum budget for this individual outfit option, if different from the global budget."),
+        "budget": types.Schema(type=types.Type.NUMBER, description="Contains the suggested clothing items and accessories for a specific outfit option, including an optional specific budget."),
     },
+)
+
+# 3. Modification Schema for Refinement
+modification_schema = types.Schema(
+    type=types.Type.OBJECT,
+    description="A specific modification action to apply to the current outfit context.",
+    properties={
+        "action": types.Schema(type=types.Type.STRING, enum=["ADD", "REMOVE", "REPLACE"], description=" The type of modification."),
+        "item_id": types.Schema(type=types.Type.STRING, description="The UUID string of the item in the current outfit to target (Required for REMOVE and REPLACE)."),
+        "category": types.Schema(type=types.Type.STRING, description="The category of the item (Required for ADD and REPLACE)."),
+        "new_item": item_schema, # Reuse item_schema for the new item definition
+        "new_color_palette": types.Schema(type=types.Type.STRING, description="Color palette for the new item (Required for ADD/REPLACE)"),
+        "new_pattern": types.Schema(type=types.Type.STRING, description="Pattern for the new item (Required for ADD/REPLACE)"),
+    },
+    required=["action"]
 )
 
 # 2. Revised Main Outfit Generation Schema (The LLM's full output)
@@ -109,17 +124,22 @@ outfit_schema = types.Schema(
                 "accessories": constraint_item_schema,
             }
         ),
-        "changed_categories": types.Schema(
+        "refinement_type": types.Schema(
+             type=types.Type.STRING,
+             enum=["NEW_OUTFIT", "REFINE_CURRENT"],
+             description="Determines if we are generating a completely new outfit (NEW_OUTFIT) or modifying the existing one (REFINE_CURRENT)."
+        ),
+        "modifications": types.Schema(
             type=types.Type.ARRAY,
-            items=types.Schema(type=types.Type.STRING),
-            description="A list of category names (e.g., 'top', 'shoes') that the user explicitly asked to change or refine. Leave empty if this is a new request or a complete overhaul."
+            items=modification_schema,
+            description="A list of specific modifications to apply if refinement_type is REFINE_CURRENT. Leave empty if NEW_OUTFIT."
         ),
         "message": types.Schema(
             type=types.Type.STRING,
             description="A message for non-fashion related inquiries. MUST ONLY be present for guardrail messages."
         )
     },
-    required=["outfits", "max_budget", "changed_categories"]
+    required=["outfits", "max_budget", "refinement_type"]
 )
 
 # --- 3. System Prompt and Guardrail ---
@@ -160,20 +180,43 @@ If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 f
 3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
 4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
 
-[REFINE & MODIFY LOGIC]
-If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
-1.  **Identify Changed Categories:** Populate the 'changed_categories' list. THIS IS CRITICAL.
-    *   **REFINE/MODIFY:** If the user changes a specific item, list ONLY that category (e.g. `['shoes']`). **WARNING: If you do not list the category here, the system will LOCK the previous item and your change will be IGNORED.**
-    *   **ADD ITEM/CHANGE BUDGET:** If the user ONLY adds a new item or changes the budget, leave `changed_categories` EMPTY `[]`.
-    *   **NEW REQUEST/OVERHAUL:** If the user asks for a completely new outfit or different style, list **ALL** categories in `changed_categories` (e.g. `['top', 'bottom', 'shoes', 'accessories']`) to force a full regeneration.
-2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
-3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
-4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
-5.  **Preserve Budget:** You MUST preserve the specific 'budget' of the outfit being refined in the new plan, unless the user explicitly asks to change the price/budget. Do not revert to the global budget if a specific one was set.
+[REFINE & MODIFY LOGIC - MODULAR REFINEMENT]
+If the user asks to change, remove, or add items to the PREVIOUS OUTFIT, you must use 'refinement_type': 'REFINE_CURRENT' and populate the 'modifications' list.
 
-CRITICAL: When performing a refinement (i.e., 'changed_categories' is NOT empty), you MUST generate EXACTLY ONE (1) outfit plan in the 'outfits' list.
-EXCEPTION: Only generate multiple outfits if the user EXPLICITLY asks for "options" or a specific number (e.g. "show me 2 options") IN THE CURRENT MESSAGE.
-IGNORE any "num_outfits" or "options" requests from previous messages in the history. Refinement defaults to 1.
+**TRIGGER WORDS**: If the user's request contains any of the following words (or synonyms) referencing the current look, you MUST use `REFINE_CURRENT`:
+* "remove", "delete", "drop", "take off"
+* "change", "replace", "swap", "switch", "instead of"
+* "add", "include", "wear", "put on"
+
+The 'outfits' field should be left EMPTY [] when using REFINE_CURRENT, because the backend will reconstruct the outfit based on your modifications.
+
+Types of Modifications:
+1.  **REMOVE an Item:**
+    - item_id: The exact UUID string of the item to remove as seen in the history (e.g., "8021af5d-9279-49a5-911c-0b4a02b05d57"). DO NOT use integer indices like 1 or 2.
+    - Example: `{"action": "REMOVE", "item_id": "8021af5d-9279-49a5-911c-0b4a02b05d57"}`
+
+2.  **REPLACE/CHANGE an Item:**
+    - Action: "REPLACE"
+    - item_id: The exact UUID string of the item being replaced (e.g., "60708682-8f89-4bd5-9585-b1085bfc16ae").
+    - category: The category of the new item.
+    - new_item: The description of the new item.
+    - Example: `{"action": "REPLACE", "item_id": "60708682-8f89-4bd5-9585-b1085bfc16ae", "category": "shoes", "new_item": {"tag": "red boots", "fit": "comfortable"}, "new_color_palette": "red", "new_pattern": "solid"}`
+
+3.  **ADD an Item:**
+    - Action: "ADD"
+    - category: The category of the new item.
+    - new_item: The description of the new item.
+    - Example: `{"action": "ADD", "category": "accessories", "new_item": {"tag": "silver watch", "fit": "standard"}, "new_color_palette": "silver", "new_pattern": "solid"}`
+
+**IMPORTANT:**
+- **VSYNC LOGIC:** Do NOT re-list modifications from previous turns. Only list the NEW modifications requested in the CURRENT user message relative to the last outfit shown.
+- Unless the user explicitly asks to remove everything else, DO NOT list unchanged items. The system automatically KEEPS any item from the previous outfit that is not referenced in a REMOVE or REPLACE action.
+- If the user asks for a completely NEW outfit or styles, use 'refinement_type': 'NEW_OUTFIT' and generate the full 'outfits' list as usual.
+- **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically.
+
+CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` list MUST BE EMPTY `[]`, UNLESS you need to specify a specific `budget` for the refined outfit that differs from the global one.
+EXCEPTION: In that case, include a SINGLE object in `outfits` containing ONLY the `budget` field.
+EXCEPTION: Only generate multiple full outfits in `outfits` if `refinement_type` is `NEW_OUTFIT`.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -232,22 +275,43 @@ If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 f
 3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
 4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
 
-CRITICAL: When performing a refinement (i.e., 'changed_categories' is NOT empty), you MUST generate EXACTLY ONE (1) outfit plan in the 'outfits' list.
-EXCEPTION: Only generate multiple outfits if the user EXPLICITLY asks for "options" or a specific number (e.g. "show me 2 options") IN THE CURRENT MESSAGE.
-IGNORE any "num_outfits" or "options" requests from previous messages in the history. Refinement defaults to 1.
+[REFINE & MODIFY LOGIC - MODULAR REFINEMENT]
+If the user asks to change, remove, or add items to the PREVIOUS OUTFIT, you must use 'refinement_type': 'REFINE_CURRENT' and populate the 'modifications' list.
 
-[REFINE & MODIFY LOGIC]
-If the user asks to change or refine a specific item in the previous outfit (e.g., 'change the shoes to red', 'I don't like the shirt'), you MUST:
-1.  **Identify Changed Categories:** Populate the 'changed_categories' list.
-    *   **REFINE/MODIFY:** If the user changes a specific item, list ONLY that category (e.g. `['shoes']`).
-    *   **ADD ITEM/CHANGE BUDGET:** If the user ONLY adds a new item or changes the budget, leave `changed_categories` EMPTY `[]`.
-    *   **NEW REQUEST/OVERHAUL:** If the user asks for a completely new outfit or different style, list **ALL** categories in `changed_categories` (e.g. `['top', 'bottom', 'shoes', 'accessories']`) to force a full regeneration.
-2.  **Regenerate the FULL outfit plan.** Do NOT return only the single changed item unless the user explicitly asks to "show me ONLY shirts".
-3.  **Preserve Context:** Keep the other items (top, bottom, etc.) consistent with the style and vibe of the previous outfit, unless the user asks to change them too.
-4.  **Apply Change:** Apply the user's specific change (e.g., new color, new type) to the target item.
-5.  **Preserve Budget:** You MUST preserve the specific 'budget' of the outfit being refined in the new plan, unless the user explicitly asks to change the price/budget. Do not revert to the global budget if a specific one was set.
+**TRIGGER WORDS**: If the user's request contains any of the following words (or synonyms) referencing the current look, you MUST use `REFINE_CURRENT`:
+* "remove", "delete", "drop", "take off"
+* "change", "replace", "swap", "switch", "instead of"
+* "add", "include", "wear", "put on"
 
-If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
+The 'outfits' field should be left EMPTY [] when using REFINE_CURRENT, because the backend will reconstruct the outfit based on your modifications.
+
+Types of Modifications:
+1.  **REMOVE an Item:**
+    - item_id: The exact UUID string of the item to remove as seen in the history (e.g., "8021af5d-9279-49a5-911c-0b4a02b05d57"). DO NOT use integer indices like 1 or 2.
+    - Example: `{"action": "REMOVE", "item_id": "8021af5d-9279-49a5-911c-0b4a02b05d57"}`
+
+2.  **REPLACE/CHANGE an Item:**
+    - Action: "REPLACE"
+    - item_id: The exact UUID string of the item being replaced (e.g., "60708682-8f89-4bd5-9585-b1085bfc16ae").
+    - category: The category of the new item.
+    - new_item: The description of the new item.
+    - Example: `{"action": "REPLACE", "item_id": "60708682-8f89-4bd5-9585-b1085bfc16ae", "category": "shoes", "new_item": {"tag": "red boots", "fit": "comfortable"}, "new_color_palette": "red", "new_pattern": "solid"}`
+
+3.  **ADD an Item:**
+    - Action: "ADD"
+    - category: The category of the new item.
+    - new_item: The description of the new item.
+    - Example: `{"action": "ADD", "category": "accessories", "new_item": {"tag": "silver watch", "fit": "standard"}, "new_color_palette": "silver", "new_pattern": "solid"}`
+
+**IMPORTANT:**
+- **VSYNC LOGIC:** Do NOT re-list modifications from previous turns. Only list the NEW modifications requested in the CURRENT user message relative to the last outfit shown.
+- Unless the user explicitly asks to remove everything else, DO NOT list unchanged items. The system automatically KEEPS any item from the previous outfit that is not referenced in a REMOVE or REPLACE action.
+- If the user asks for a completely NEW outfit or styles, use 'refinement_type': 'NEW_OUTFIT' and generate the full 'outfits' list as usual.
+- **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically.
+
+CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` list MUST BE EMPTY `[]`, UNLESS you need to specify a specific `budget` for the refined outfit that differs from the global one.
+EXCEPTION: In that case, include a SINGLE object in `outfits` containing ONLY the `budget` field.
+EXCEPTION: Only generate multiple full outfits in `outfits` if `refinement_type` is `NEW_OUTFIT`. 
 
 DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY.
 
@@ -302,7 +366,9 @@ def generate_outfit_plan(
         image_data: tuple[str, bytes] | None,
         past_images: dict[str, bytes] | None,
         user_preferences: dict | None,
-        gender: str | None
+        gender: str | None,
+        focus_outfit_index: int | None = None,  # NEW: Optional index to focus LLM context
+        focus_message_id: str | None = None
 ) -> dict:
     if gender is None:
         gender = "male"
@@ -312,9 +378,60 @@ def generate_outfit_plan(
 
     # --- 1. RICOSTRUZIONE STORIA PER API (Solo Testo Grezzo) ---
     gemini_history = []
+    
+    # Identify the target message for refinement context
+    # Default to the last model message with outfits if no specific ID is provided
+    target_msg_id = focus_message_id
+    last_outfit_msg = None
+    
+    if not target_msg_id and chat_history:
+        last_outfit_msg = next((m for m in reversed(chat_history) if m.get('role') == 'model' and m.get('outfits')), None)
+        if last_outfit_msg:
+            target_msg_id = last_outfit_msg.get('message_id')
 
     for msg in chat_history:
         message_parts = [types.Part(text=msg["text"])]
+        
+        # --- NEW CONTEXT INJECTION: EXPOSE ITEM IDs TO LLM ---
+        # If the message is from the model and contains detailed outfit data (with IDs),
+        # we append a system note listing these IDs so the LLM can reference them for refinement.
+        if msg.get("role") == "model" and msg.get("outfits"):
+            
+            # Check if this is the target message
+            is_target = False
+            if target_msg_id and str(msg.get('message_id')) == str(target_msg_id):
+                is_target = True
+            elif not target_msg_id and not focus_message_id:
+                # Fallback if no IDs are present in history: use object identity if possible
+                if last_outfit_msg and msg is last_outfit_msg:
+                    is_target = True
+
+            # ONLY inject the system note for the target message
+            if is_target:
+                outfit_context = "\n\n[SYSTEM NOTE: The user was shown the following specific items with these IDs in this turn. Use these exact UUIDs for any 'item_id' in your refinement plan (REMOVE/REPLACE).]\n"
+                
+                # Filter outfit options based on focus_outfit_index
+                for i, outfit_opt in enumerate(msg["outfits"]):
+                    # If we have a focus index AND this is the target message, 
+                    # SKIP options that are not the selected one.
+                    if focus_outfit_index is not None and i != focus_outfit_index:
+                        continue
+                    
+                    outfit_context += f"--- Outfit Option {i+1} ---\n"
+                    items = outfit_opt.get('outfit', [])
+                    
+                    if isinstance(items, list):
+                        for item in items:
+                            # Extract key details
+                            item_id = item.get('id', 'N/A')
+                            title = item.get('title', 'Unknown Item')
+                            main_cat = item.get('main_category', 'item')
+                            
+                            outfit_context += f"- [{main_cat}] ID: {item_id} | Name: {title}\n"
+                
+                # Append this context to the message parts sent to Gemini
+                message_parts.append(types.Part(text=outfit_context))
+
         if msg.get("role") == "user" and "image_id" in msg:
             img_id = msg["image_id"]
             if img_id in past_images:
@@ -411,7 +528,8 @@ def generate_outfit_plan(
                 'outfits': final_data.get('outfits'),
                 'budget': final_data.get('max_budget'),
                 'hard_constraints': final_data.get('hard_constraints'),
-                'changed_categories': final_data.get('changed_categories', []),
+                'refinement_type': final_data.get('refinement_type', 'NEW_OUTFIT'),
+                'modifications': final_data.get('modifications', []),
                 'history': chat_history,
                 'conversation_title': dialogue_state.get('conversation_title')
             }
@@ -553,7 +671,16 @@ if __name__ == '__main__':
     print(f"--- Sending Prompt: '{test_prompt}' ---")
     
     # 1. Get the plan from the LLM (LLM only sees navy/silk preference)
-    outfit_json = generate_outfit_plan(TEST_CLIENT, TEST_MODEL, test_prompt, user_preferences=test_preferences, hard_constraints=test_hard_constraints, gender="Male")
+    outfit_json = generate_outfit_plan(
+        TEST_CLIENT, 
+        TEST_MODEL, 
+        test_prompt, 
+        chat_history=[], 
+        image_data=None, 
+        past_images=None, 
+        user_preferences=test_preferences, 
+        gender="Male"
+    )
     
     print("\n--- Raw LLM Response (Structured JSON) ---")
     print(json.dumps(outfit_json, indent=2))

@@ -545,6 +545,9 @@ def send_message():
         return response, 200
 
     except Exception as e:
+        import traceback
+        print(f"CRITICAL ERROR in send_message: {str(e)}")
+        print(traceback.format_exc())
         return {"error": str(e)}, 500
 
 @app.route('/api/outfit/explain', methods=['POST'])

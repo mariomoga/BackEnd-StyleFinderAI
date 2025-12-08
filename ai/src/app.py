@@ -140,7 +140,18 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     if target_outfit_budget:
         final_prompt += f"\n(System Note: Refining outfit option #{target_index+1} which has a specific budget of {target_outfit_budget}. PRESERVE this budget.)"
 
-    response = generate_outfit_plan(GEMINI_CLIENT, GEMINI_MODEL_NAME, final_prompt, chat_history, image_data, past_images, user_preferences, gender)
+    response = generate_outfit_plan(
+        GEMINI_CLIENT, 
+        GEMINI_MODEL_NAME, 
+        final_prompt, 
+        chat_history, 
+        image_data, 
+        past_images, 
+        user_preferences,
+        gender,
+        focus_outfit_index=selected_outfit_index, # Pass the index to filter context
+        focus_message_id=selected_message_id # NEW: Pass the message ID to strictly target context
+    )
     status = response.get('status')
 
     # --- Status Check & Dialogue Termination ---
@@ -164,8 +175,10 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     # --- Status READY_TO_GENERATE: Proceed to heavy Retrieval and Assembly ---
 
     # Extract final plan and constraints from the LLM response
+    refinement_type = response.get('refinement_type', 'NEW_OUTFIT')
     outfits_list = response.get('outfits')
-    if not outfits_list:
+    
+    if not outfits_list and refinement_type != 'REFINE_CURRENT':
         # Fallback for backward compatibility or if LLM messes up
         single_outfit = response.get('outfit_plan')
         if single_outfit:
@@ -173,6 +186,10 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         else:
             logging.error("Either LLM returned READY_TO_GENERATE but 'outfits' is missing or LLM returned an unexpected status")
             return {"status": "Error", "message": "Failed to generate an outfit plan after successful budget confirmation.", "status_code": 500}
+    
+    # Ensure the loop runs exactly once for REFINE_CURRENT even if outfits is empty
+    if not outfits_list and refinement_type == 'REFINE_CURRENT':
+         outfits_list = [{}] # Dummy empty plan to trigger the loop iteration
 
     logging.info(f"Raw LLM Response: {response}")
 
@@ -195,17 +212,14 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         if s.endswith('s'): return s[:-1] # Simple singularization
         return s
 
-    changed_categories = response.get('changed_categories', [])
-    logging.info(f"DEBUG: changed_categories from LLM: {changed_categories}")
-
     # --- SAFEGUARD: Enforce single outfit for refinement unless explicitly requested ---
-    if changed_categories and len(outfits_list) > 1:
+    if refinement_type == 'REFINE_CURRENT' and len(outfits_list) > 1:
         # Simple heuristic: check if user asked for "options" or numbers in the current prompt
         keywords = ["option", "choice", "variant", " 1 ", " 2 ", " 3 ", " one ", " two ", " three "]
         is_explicit_request = any(k in user_prompt.lower() for k in keywords)
         
         if not is_explicit_request:
-            logging.info("DEBUG: Refinement detected without explicit option request. Enforcing single outfit.")
+            logging.info("DEBUG: Refinement (REFINE_CURRENT) detected without explicit option request. Enforcing single outfit.")
             outfits_list = outfits_list[:1]
 
     last_outfit = None
@@ -241,122 +255,160 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
             
         logging.info(f"Processing outfit {i+1}/{len(outfits_list)} with budget: {current_outfit_budget}...")
         
-        parsed_item_list = parse_outfit_plan(outfit_plan, user_constraints)
-
-        if parsed_item_list is None:
-            logging.error(f"Parsing failed for outfit {i+1}")
-            continue # Skip this outfit if parsing fails
+        parsed_item_list = None
         
-        elif parsed_item_list and 'message' in parsed_item_list[0]:
-            error_msg = parsed_item_list[0]['message'] if parsed_item_list else "Parsing failed."
-            logging.error(f"Post-LLM parsing failed for outfit {i+1}: {error_msg}")
-            continue
+        # Only parse outfit plan if it's a NEW_OUTFIT generation (or fallback)
+        # If REFINE_CURRENT, outfit_plan is likely empty/dummy, so we skip parsing
+        if refinement_type != 'REFINE_CURRENT':
+            parsed_item_list = parse_outfit_plan(outfit_plan, user_constraints)
 
-        # --- CARRY-OVER LOGIC ---
-        if last_outfit:
-             new_plan_categories = set(normalize(item['category']) for item in parsed_item_list)
-             for prev_item in last_outfit:
-                 prev_cat = prev_item.get('main_category', '')
-                 if not prev_cat: continue
-                 
-                 norm_prev_cat = normalize(prev_cat)
-                 
-                 # Check if missing and not changed
-                 if norm_prev_cat not in new_plan_categories:
-                     is_changed = False
-                     for changed_cat in changed_categories:
-                         if normalize(changed_cat) == norm_prev_cat:
-                             is_changed = True
-                             break
-                     
-                     if not is_changed:
-                         logging.info(f"DEBUG: Category '{prev_cat}' missing and not changed. Carrying over.")
-                         # Add a placeholder item to parsed_item_list to trigger locking logic
-                         # We need 'description' for embedding if it ends up being searched (unlikely if locked, but safe to have)
-                         parsed_item_list.append({
-                             'category': prev_cat, 
-                             'items': [], 
-                             'color_palette': '', 
-                             'pattern': '',
-                             'description': f"{prev_cat}" # Dummy description
-                         })
-
-        # --- LOCKING & RETRIEVAL ---
-        all_candidates = []
-        items_to_search = []
-        indices_to_search = []
-
-        for idx, item in enumerate(parsed_item_list):
-            category = item['category']
-            is_locked = False
-            locked_candidate = None
+            if parsed_item_list is None:
+                logging.error(f"Parsing failed for outfit {i+1}")
+                continue # Skip this outfit if parsing fails
             
-            # Locking condition: last_outfit exists AND category NOT in changed_categories
+            elif parsed_item_list and 'message' in parsed_item_list[0]:
+                error_msg = parsed_item_list[0]['message'] if parsed_item_list else "Parsing failed."
+                logging.error(f"Post-LLM parsing failed for outfit {i+1}: {error_msg}")
+                continue
+
+        try:
+            # --- NEW MODULAR REFINEMENT LOGIC ---
+            refinement_type = response.get('refinement_type', 'NEW_OUTFIT') # Default to NEW_OUTFIT for backward compatibility
+            modifications = response.get('modifications', [])
+            
+            logging.info(f"Refinement Type: {refinement_type}, Modifications: {len(modifications)}")
+    
+            all_candidates = []
+            items_to_search = []
+            indices_to_search = []
+            
+            # Helper map to track active items from previous outfit by ID
+            # Only relevant if we have a last_outfit
+            active_previous_items = {}
             if last_outfit:
-                 is_changed = False
-                 for changed_cat in changed_categories:
-                     if normalize(changed_cat) == normalize(category):
-                         is_changed = True
-                         break
-                 
-                 if not is_changed:
-                     # Find item in last_outfit
-                     for prev_item in last_outfit:
-                         prev_cat = prev_item.get('main_category', '')
-                         if normalize(prev_cat) == normalize(category):
-                             logging.info(f"DEBUG: Locking item {category}")
-                             is_locked = True
-                             locked_candidate = {
-                                 'price': prev_item.get('price', 0),
-                                 'similarity': 1.0,
-                             }
-                             locked_candidate.update(prev_item)
-                             break
-            
-            if is_locked and locked_candidate:
-                all_candidates.append([locked_candidate])
+                for item in last_outfit:
+                    item_id = item.get('id')
+                    if item_id:
+                         active_previous_items[str(item_id)] = item
+    
+            parsed_item_list_for_search = []
+    
+            if refinement_type == 'REFINE_CURRENT' and last_outfit:
+                # 1. Process REMOVE and REPLACE to update active_previous_items
+                for mod in modifications:
+                    action = mod.get('action')
+                    target_id = str(mod.get('item_id', ''))
+                    
+                    if action in ['REMOVE', 'REPLACE']:
+                        if target_id in active_previous_items:
+                            logging.info(f"Action {action}: Removing item ID {target_id} from active set.")
+                            del active_previous_items[target_id]
+                        else:
+                            logging.warning(f"Action {action}: Target ID {target_id} not found in previous outfit.")
+                
+                # 2. Add remaining (unchanged) items as LOCKED candidates
+                # These are items that were in last_outfit and NOT removed/replaced
+                for locked_item in active_previous_items.values():
+                    logging.info(f"Locking item ID {locked_item.get('id')}: {locked_item.get('title')}")
+                    locked_candidate = {'price': locked_item.get('price', 0), 'similarity': 1.0}
+                    locked_candidate.update(locked_item)
+                    
+                    # We add them to the candidate list. But wait, we need to maintain an order?
+                    # Knapsack doesn't strictly care about order, but our result list structure might.
+                    # Actually, select_final_outfit_and_metrics expects a list of candidate lists.
+                    # We can append these locked candidates first.
+                    all_candidates.append([locked_candidate])
+                    # We don't add to items_to_search
+                
+                # 3. Process REPLACE and ADD to prepare new searches
+                for mod in modifications:
+                    action = mod.get('action')
+                    if action in ['REPLACE', 'ADD']:
+                        new_item_def = mod.get('new_item')
+                        category = mod.get('category')
+                        
+                        if new_item_def and category:
+                            # Construct a parsed item object for search
+                            search_item = {
+                                'category': category,
+                                'items': [new_item_def], # The schema has 'items' list inside category
+                                'color_palette': mod.get('new_color_palette', ''),
+                                'pattern': mod.get('new_pattern', ''),
+                                'description': f"{mod.get('new_color_palette', '')} {mod.get('new_pattern', '')} {new_item_def.get('tag')} {new_item_def.get('fit')}".strip()
+                            }
+                            
+                            logging.info(f"Action {action}: Adding new search for {search_item['description']}")
+                            items_to_search.append(search_item)
+                            # The index in all_candidates will be len(all_candidates) (current size)
+                            indices_to_search.append(len(all_candidates))
+                            all_candidates.append(None) # Placeholder
+    
             else:
-                all_candidates.append(None) # Placeholder
-                items_to_search.append(item)
-                indices_to_search.append(idx)
+                # --- FALLBACK / NEW_OUTFIT LOGIC ---
+                # Standard generation from 'outfits_list' (which should be populated if NEW_OUTFIT)
+                # If REFINE_CURRENT but no last_outfit, we treat as new? Or fail?
+                
+                # Fallback to parsing the outfit plan as before
+                # parsed_item_list was already populated at the start of the loop (line 248 appx)
+                
+                # verify parsed_item_list is populated
+                if not parsed_item_list and refinement_type != 'REFINE_CURRENT':
+                     # Should have been caught by earlier check, but just in case
+                     parsed_item_list = parse_outfit_plan(outfit_plan, user_constraints)
+                if parsed_item_list:
+                    for idx, item in enumerate(parsed_item_list):
+                        items_to_search.append(item)
+                        indices_to_search.append(idx)
+                        all_candidates.append(None)
+    
+            # Batch search for unlocked items
+            if items_to_search:
+                logging.info(f"Generating embeddings for {len(items_to_search)} items...")
+                for item in items_to_search:
+                    query_vector = get_text_embedding_vector(MODEL, PROC, DEVICE, item['description']) 
+                    query_vector = query_vector.flatten().tolist() 
+                    item['embedding'] = query_vector
+    
+                logging.info("Searching product candidates in vector DB...")
+                search_results = search_product_candidates_with_vector_db(SUPABASE_CLIENT, items_to_search, current_outfit_budget, gender)
+                
+                if search_results:
+                    # If search_results is shorter than items_to_search (error?), handle it.
+                    # Assuming 1-to-1 mapping if no error.
+                    for j, result in enumerate(search_results):
+                        if j < len(indices_to_search):
+                            original_idx = indices_to_search[j]
+                            all_candidates[original_idx] = result
+                
+            # Check for retrieval errors in unlocked items
+            if any(c and 'error' in c[0] for c in all_candidates if c and isinstance(c, list) and len(c)>0 and isinstance(c[0], dict)):
+                 # If any candidate list has an error
+                 # We can log it.
+                 pass
+    
+            # Check for missing candidates (vector search failure)
+            if any(c is None for c in all_candidates):
+                logging.error(f"Vector search failed for some items. Aborting outfit {i+1}.")
+                continue
 
-        # Batch search for unlocked items
-        if items_to_search:
-            logging.info(f"Generating embeddings for {len(items_to_search)} items...")
-            for item in items_to_search:
-                query_vector = get_text_embedding_vector(MODEL, PROC, DEVICE, item['description']) 
-                query_vector = query_vector.flatten().tolist() 
-                item['embedding'] = query_vector
-
-            logging.info("Searching product candidates in vector DB...")
-            search_results = search_product_candidates_with_vector_db(SUPABASE_CLIENT, items_to_search, current_outfit_budget, gender)
+            # 4. OUTFIT ASSEMBLY
+            logging.info("Assembling outfit...")
+            (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, current_outfit_budget)
             
-            if search_results:
-                # If search_results is shorter than items_to_search (error?), handle it.
-                # Assuming 1-to-1 mapping if no error.
-                for j, result in enumerate(search_results):
-                    if j < len(indices_to_search):
-                        original_idx = indices_to_search[j]
-                        all_candidates[original_idx] = result
+            final_result_single = select_final_outfit_and_metrics(all_candidates, current_outfit_budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
             
-        # Check for retrieval errors in unlocked items
-        if any(c and 'error' in c[0] for c in all_candidates if c and isinstance(c, list) and len(c)>0 and isinstance(c[0], dict)):
-             # If any candidate list has an error
-             # We can log it.
-             pass
-
-        # 4. OUTFIT ASSEMBLY
-        logging.info("Assembling outfit...")
-        (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, current_outfit_budget)
+            if 'error' in final_result_single:
+                 logging.error(f"Selection failed for outfit {i+1}: {final_result_single}")
+                 continue
+            
+            logging.info(f"Outfit {i+1} result: Cost={final_result_single.get('cost')}, Budget={current_outfit_budget}, Remaining={final_result_single.get('remaining_budget')}")
+            final_outfits_results.append(final_result_single)
         
-        final_result_single = select_final_outfit_and_metrics(all_candidates, current_outfit_budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
-        
-        if 'error' in final_result_single:
-             logging.error(f"Selection failed for outfit {i+1}: {final_result_single}")
-             continue
-        
-        logging.info(f"Outfit {i+1} result: Cost={final_result_single.get('cost')}, Budget={current_outfit_budget}, Remaining={final_result_single.get('remaining_budget')}")
-        final_outfits_results.append(final_result_single)
+        except Exception as e:
+            import traceback
+            logging.error(f"CRITICAL ERROR processing outfit {i+1}: {str(e)}")
+            logging.error(traceback.format_exc())
+            continue
 
     # Filter out over-budget outfits if we have at least one valid outfit
     within_budget_outfits = [o for o in final_outfits_results if o.get('remaining_budget') is None or o.get('remaining_budget', 0) >= 0]

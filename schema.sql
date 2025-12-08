@@ -44,7 +44,14 @@ CREATE TABLE IF NOT EXISTS product_data (
     brand VARCHAR(255),
     material VARCHAR(255),
     description TEXT, -- Inferred from usage in embeddings
-    embedding VECTOR(512) -- Assuming 512 dim for CLIP/Text embedding, adjust as needed
+    schema_description TEXT,
+    schema_color TEXT,
+    main_category TEXT,
+    audience TEXT,
+    availability TEXT,
+    embedding VECTOR(512), 
+    img_embedding VECTOR(512),
+    detail_embedding VECTOR(512)
 );
 
 -- Outfit Suggestions (Link between AI response and Products)

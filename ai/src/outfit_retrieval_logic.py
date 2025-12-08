@@ -86,8 +86,8 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
 
         if not response.data:
             print("Warning: Batch search returned no data.")
-            return [{"error": "No candidates found for any item."}]
-
+            return [] # Return empty list, let caller handle missing data
+            
         flat_results = pd.DataFrame(response.data)
         
         all_candidates = []
