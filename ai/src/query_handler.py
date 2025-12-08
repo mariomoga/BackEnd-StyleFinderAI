@@ -535,7 +535,8 @@ def generate_outfit_plan(
             }
         except Exception as e:
             print(e)
-            pass
+            print(f"Error during final outfit generation: {e}")
+            return {'status': 'Error', 'message': "Failed to generate detailed outfit plan."}
 
     else:
         if dialogue_state.get('message'):
