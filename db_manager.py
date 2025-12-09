@@ -111,22 +111,74 @@ class DBManager:
             raise
 
     @staticmethod
+    def get_user_by_google_id(google_id: str):
+        """Recupera utente per google_id. Ritorna dict o None."""
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, name, email, password, gender, google_id FROM users WHERE google_id = %s LIMIT 1",
+                (google_id,)
+            )
+            row = cursor.fetchone()
+            cursor.close()
+            if row:
+                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3], "gender": row[4], "google_id": row[5]}
+            return None
+        except Exception:
+            raise
+
+    @staticmethod
+    def create_google_user(name: str, email: str, google_id: str):
+        """Crea un nuovo utente OAuth (senza password)."""
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO users (name, email, google_id) VALUES (%s, %s, %s)",
+                (name, email, google_id)
+            )
+            conn.commit()
+            cursor.close()
+        except Exception:
+            conn.rollback()
+            raise
+
+    @staticmethod
+    def link_google_account(user_id: int, google_id: str) -> bool:
+        """Collega un account Google a un utente esistente."""
+        try:
+            conn = DBManager.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "UPDATE users SET google_id = %s WHERE id = %s",
+                (google_id, user_id)
+            )
+            updated = cursor.rowcount > 0
+            conn.commit()
+            cursor.close()
+            return updated
+        except Exception:
+            conn.rollback()
+            raise
+
+    @staticmethod
     def get_user_by_email(email: str):
         """Recupera utente dalla tabella `users` per email.
 
-        Ritorna dict {id, email, password} oppure None.
+        Ritorna dict {id, email, password, google_id} oppure None.
         """
         try:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, name, email, password, gender FROM users WHERE email = %s LIMIT 1",
+                "SELECT id, name, email, password, gender, google_id FROM users WHERE email = %s LIMIT 1",
                 (email,)
             )
             row = cursor.fetchone()
             cursor.close()
             if row:
-                return {"id": row[0], "name" : row[1], "email": row[2], "password": row[3], "gender": row[4]}
+                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3], "gender": row[4], "google_id": row[5]}
             return None
         except Exception:
             raise
@@ -275,7 +327,7 @@ class DBManager:
 
     @staticmethod
     def get_user_by_id(user_id: int):
-        """Recupera utente per id. Ritorna dict {id,email,password} oppure None.
+        """Recupera utente per id. Ritorna dict {id,email,password,google_id} oppure None.
 
         Necessario per Flask-Login user_loader.
         """
@@ -283,13 +335,13 @@ class DBManager:
             conn = DBManager.get_db_connection()
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT id, name, email, password, gender FROM users WHERE id = %s LIMIT 1",
+                "SELECT id, name, email, password, gender, google_id FROM users WHERE id = %s LIMIT 1",
                 (user_id,)
             )
             row = cursor.fetchone()
             cursor.close()
             if row:
-                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3], "gender": row[4]}
+                return {"id": row[0], "name": row[1], "email": row[2], "password": row[3], "gender": row[4], "google_id": row[5]}
             return None
         except Exception:
             raise

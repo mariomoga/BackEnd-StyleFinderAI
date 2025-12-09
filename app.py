@@ -6,6 +6,8 @@ from flask import Flask, request
 from flask_cors import CORS
 from flask_login import LoginManager, UserMixin, login_user, logout_user, current_user, login_required
 from werkzeug.security import generate_password_hash, check_password_hash
+from google.oauth2 import id_token
+from google.auth.transport import requests as google_requests
 
 from db_manager import DBManager
 import os
@@ -146,6 +148,91 @@ def login():
             "user": user_payload
         }, 200
 
+    except Exception as e:
+        return {"error": str(e)}, 500
+
+@app.route('/api/user/google-login', methods=['POST'])
+def google_login():
+    """Authenticate user via Google OAuth.
+    
+    Receives JSON: {"credential": "token"}
+    Token can be either an ID token (from GoogleLogin component) or 
+    an access token (from useGoogleLogin hook).
+    """
+    try:
+        data = request.get_json() or {}
+        token = data.get('credential')
+        
+        if not token:
+            return {"error": "Token mancante"}, 400
+        
+        GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
+        if not GOOGLE_CLIENT_ID:
+            return {"error": "Google OAuth not configured"}, 500
+        
+        google_id = None
+        email = None
+        name = None
+        
+        # Try to verify as ID token first
+        try:
+            idinfo = id_token.verify_oauth2_token(
+                token, 
+                google_requests.Request(), 
+                GOOGLE_CLIENT_ID
+            )
+            google_id = idinfo['sub']
+            email = idinfo['email']
+            name = idinfo.get('name', email.split('@')[0])
+        except ValueError:
+            # Not an ID token, try as access token
+            import requests as http_requests
+            userinfo_response = http_requests.get(
+                'https://www.googleapis.com/oauth2/v3/userinfo',
+                headers={'Authorization': f'Bearer {token}'}
+            )
+            if userinfo_response.status_code != 200:
+                return {"error": "Token non valido"}, 401
+            
+            userinfo = userinfo_response.json()
+            google_id = userinfo.get('sub')
+            email = userinfo.get('email')
+            name = userinfo.get('name', email.split('@')[0] if email else 'User')
+        
+        if not google_id or not email:
+            return {"error": "Impossibile ottenere informazioni utente"}, 401
+        
+        # Try to find user by google_id or email
+        user = DBManager.get_user_by_google_id(google_id)
+        if not user:
+            user = DBManager.get_user_by_email(email)
+        
+        if user:
+            # Link Google account if not already linked
+            if not user.get('google_id'):
+                DBManager.link_google_account(user['id'], google_id)
+        else:
+            # Create new user (no password for OAuth users)
+            DBManager.create_google_user(name, email, google_id)
+            user = DBManager.get_user_by_google_id(google_id)
+        
+        # Login via Flask-Login
+        preferences = DBManager.get_user_preferences(user['id'])
+        if user.get('gender'):
+            preferences['gender'] = user['gender']
+        
+        login_user(AppUser(user))
+        
+        return {
+            "success": True,
+            "user": {
+                "id": user['id'],
+                "name": user['name'],
+                "email": user['email'],
+                "preferences": preferences
+            }
+        }, 200
+        
     except Exception as e:
         return {"error": str(e)}, 500
 
