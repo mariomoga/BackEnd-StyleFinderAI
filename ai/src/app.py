@@ -54,7 +54,7 @@ except Exception as e:
     # Reraise the exception to stop the server process from starting
     raise RuntimeError("Failed to initialize the Google Gemini Client.") from e
 
-GEMINI_MODEL_NAME = 'gemini-2.5-flash'
+GEMINI_MODEL_NAME = 'gemini-2.0-flash'
 
 # 3. CLIP Model Initialization (Heavy/Critical Resource)
 CLIP_MODEL_NAME = "patrickjohncyh/fashion-clip"
@@ -163,12 +163,28 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     
     if status == "AWAITING_INPUT":
         # Conversation must continue. Return necessary state info to the frontend.
+        # Helper to clean unicode escapes in labels (e.g. \u20ac -> €)
+        def clean_response_text(data):
+            if isinstance(data, list):
+                return [clean_response_text(item) for item in data]
+            if isinstance(data, dict):
+                return {k: clean_response_text(v) for k, v in data.items()}
+            if isinstance(data, str):
+                return data.replace("\\u20ac", "€").replace("\\u20AC", "€")
+            return data
+
+        prompt_to_user = response.get('prompt_to_user')
+        budget_options = clean_response_text(response.get('budget_options'))
+        outfit_generation_options = clean_response_text(response.get('outfit_generation_options'))
+
         logging.info("LLM is AWAITING_INPUT. Returning dialogue prompt.")
         return {
             "status": "AWAITING_INPUT",
-            "prompt_to_user": response.get('prompt_to_user'),
+            "prompt_to_user": prompt_to_user,
             "chat_history": response.get('history', chat_history),
             "conversation_title": response.get('conversation_title'),
+            "budget_options": budget_options,
+            "outfit_generation_options": outfit_generation_options,
             "status_code": 202 # Accepted (partial content)
         }
     

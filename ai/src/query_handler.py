@@ -37,6 +37,33 @@ constraint_item_schema = types.Schema(
     },
 )
 
+# Defines a budget option for the interactive poll
+budget_option_schema = types.Schema(
+    type=types.Type.OBJECT,
+    description="A clickable budget range option to present to the user.",
+    properties={
+        "label": types.Schema(type=types.Type.STRING, description="Short display label (e.g., '€200 - €300')."),
+        "min_budget": types.Schema(type=types.Type.NUMBER, description="The lower bound of the budget range."),
+        "max_budget": types.Schema(type=types.Type.NUMBER, description="The upper bound of the budget range."),
+        "description": types.Schema(type=types.Type.STRING, description="A persuasive, short description of what this budget affords (e.g., 'High street brands, good value')."),
+    },
+    required=["label", "min_budget", "max_budget", "description"]
+)
+
+
+# Defines an outfit generation option for the interactive poll
+outfit_generation_option_schema = types.Schema(
+    type=types.Type.OBJECT,
+    description="A clickable option for how many outfits to generate and how to split the budget.",
+    properties={
+        "id": types.Schema(type=types.Type.STRING, description="Unique ID for the option."),
+        "label": types.Schema(type=types.Type.STRING, description="Short display label (e.g., '1 Option')."),
+        "description": types.Schema(type=types.Type.STRING, description="Short description of what this option implies."),
+        "value": types.Schema(type=types.Type.STRING, description="The text to send back if selected (e.g., 'I want 1 option')."),
+    },
+    required=["id", "label", "description", "value"]
+)
+
 # Defines the primary schema for managing the conversational state
 input_gathering_schema = types.Schema(
     type=types.Type.OBJECT,
@@ -57,9 +84,18 @@ input_gathering_schema = types.Schema(
             }
         ),
         "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
-        "message": types.Schema(type=types.Type.STRING, description="field that must contain ONLY the error message if a guardrail condition triggers"),
         "conversation_title": types.Schema(type=types.Type.STRING, description="A short, concise title for the conversation (max 5 words). Generate this ONLY if it is the first message in the conversation."),
         "num_outfits": types.Schema(type=types.Type.INTEGER, description="The number of outfit options the user wants to see (default 1, max 3). Extract this from the user's request."),
+        "budget_options": types.Schema(
+            type=types.Type.ARRAY,
+            items=budget_option_schema,
+            description="A list of 4 distinct budget range options. Generate these ONLY if 'max_budget' is MISSING. If 'max_budget' is present, this list MUST be empty []."
+        ),
+        "outfit_generation_options": types.Schema(
+            type=types.Type.ARRAY,
+            items=outfit_generation_option_schema,
+            description="A list of options for the user to choose the number of outfits and budget split. Generate these ONLY if budget is known but outfit count/preference is not."
+        ),
     },
     #required=["status", "missing_info", "max_budget", "hard_constraints"]
     required=["status"]
@@ -150,20 +186,59 @@ You are an expert conversational fashion stylist AI. Your primary goal is to fir
 
 Analyze the ENTIRE conversation history.
 
-Analyze the ENTIRE conversation history.
-
 If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, and summarize the user's intent.
 
-Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
+Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user.
 
+1. **CHECK BUDGET:**
+    - If the user explicitly states they do not care about budget, set 'max_budget' to 0.
+    - If 'max_budget' is **MISSING**, set 'status' to 'AWAITING_INPUT'.
+    - **CRITICAL:** In 'missing_info', ASK ONLY FOR THE BUDGET.
+    - **MANDATORY:** You MUST generate 4 distinct `budget_options`.
+    - **DESCRIPTION RULES:** The options must represent a "Max Budget" cap, NOT a range.
+    - **LABEL RULES:** The 'label' MUST be formatted as "Max €[amount]" (e.g. "Max €150") or "No Limit".
+        1. Lowest Cap -> Estimate a minimal budget for the requested items. Label: "Max €[amount]". Describe as "Essentials".
+        2. Mid Cap -> Estimate a moderate budget for the requested items. Label: "Max €[amount]". Describe as "Better Quality".
+        3. High Cap -> Estimate a generous budget for the requested items. Label: "Max €[amount]". Describe as "Complete Look".
+        4. "No Limit" (max_budget: 0) -> Label: "No Limit". Describe as "High-End / Luxury".
+    - **DO NOT** ask for hard constraints, preferences, or the number of outfit options in this step. KEEP IT SIMPLE.
 
-If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 0, set the 'status' to 'READY_TO_GENERATE'
+2. **CHECK OUTFIT OPTIONS (Only if Budget is Present):**
+    - If 'max_budget' is **PRESENT** (this INCLUDES 0 / "No Limit"), check if the user has implicitly or explicitly selected a number of outfits.
+    - **Logic:**
+        - If the user has NOT YET specified the number of options (and 'num_outfits' is effectively unknown/default):
+            - Set 'status' to 'AWAITING_INPUT'.
+            - **MANDATORY:** You MUST generate `outfit_generation_options`.
+            - **CRITICAL:** Set `budget_options` to an EMPTY LIST `[]`. Do NOT regenerate budget options.
+            
+            - **CASE A: Unlimited Budget (max_budget == 0):**
+                - In 'missing_info', ask: "Since budget is unlimited, would you like to see 1, 2, or 3 outfit options?"
+                - Generate SIMPLE Quantity Options:
+                    1. "1 Option" (value: "I want 1 outfit option")
+                    2. "2 Options" (value: "I want 2 outfit options")
+                    3. "3 Options" (value: "I want 3 outfit options")
 
-If the 'max_budget' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask for the budget also providing a tight budget range (in €) coherent with the user's request. It should also politely ask if the user has any OPTIONAL hard constraints (if not already stated) AND if they would like to see multiple outfit options (e.g., "Would you like to see 1, 2, or 3 options?").
+            - **CASE B: Finite Budget (max_budget > 0):**
+                - In 'missing_info', ask: "Would you like 1, 2, or 3 outfit options?"
+                - Generate Budget-Split Options:
+                    1. "1 Option" (value: "I want 1 outfit option")
+                    2. "3 Options (Same Budget)" (value: "I want 3 outfit options using the same max budget for each")
+                    3. "3 Options (Even Split)" (value: "I want 3 outfit options splitting the budget evenly")
+                    4. "3 Options (Uneven Split)" (value: "I want 3 outfit options splitting the budget unevenly")
+
+            - **CRITICAL:** DO NOT ask for preferences (colors, brands) in this step yet. ASK ONLY FOR THE OPTIONS.
+
+3. **CHECK PREFERENCES (Only if Options are Known):**
+    - If Budget AND Outfit Options are known (or user has just answered the poll), check if preferences (colors, materials, brands) are missing.
+    - **Logic:**
+        - If the user hasn't specified preferences yet:
+            - Set 'status' to 'AWAITING_INPUT'.
+            - In 'missing_info', ask: "Great! Do you have any specific preferences for colors, materials, or brands?"
+            - **DO NOT** generate `outfit_generation_options` here.
+        - If the user has already provided preferences OR explicitly said "no preferences" OR if you have already asked this question:
+            - Set 'status' to 'READY_TO_GENERATE'.
 
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
-
-If the 'max_budget' is present, set the 'status' to 'READY_TO_GENERATE'.
 
 [STEP 2: OUTFIT GENERATION (Use OutfitSchema)]
 ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case. 
@@ -179,6 +254,10 @@ If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 f
 2. Set the 'budget' field of EACH individual outfit to this calculated share.
 3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
 4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
+
+If the user specifies they want the SAME MAX BUDGET for each outfit (e.g. 'Use full budget for each', 'Same budget for all'), do NOT divide the budget. 
+**CRITICAL:** You MUST set the 'budget' field of EACH individual outfit to the FULL 'max_budget' amount.
+Example: Max Budget €300, 3 options "Same Budget" -> Each outfit has 'budget': 300.
 
 [REFINE & MODIFY LOGIC - MODULAR REFINEMENT]
 If the user asks to change, remove, or add items to the PREVIOUS OUTFIT, you must use 'refinement_type': 'REFINE_CURRENT' and populate the 'modifications' list.
@@ -220,7 +299,7 @@ EXCEPTION: Only generate multiple full outfits in `outfits` if `refinement_type`
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
-DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY. This does not apply to 'accessories_schema' or 'swimwear_schema' (since women biking includes a upper and lower piece if not requested a single piece costume).
+DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY. This does not apply to 'accessories', 'tops' (only if asking for  a hoodie/sweatshirt and t shirt since they are both in top) or 'swimwear' (since women biking includes a upper and lower piece if not requested a single piece costume).
 
 If constraints are missing, assume flexibility and generate a well-curated outfit that fits the occasion and budget. 
 
@@ -247,17 +326,67 @@ Analyze the ENTIRE conversation history and the attached image.
 If this is the FIRST message in the conversation, you MUST generate a 'conversation_title'. The title should be short, concise, creative and summarize the user's intent.
 
 Determine if the following two pieces of information are explicitly present:
-a. Determine if a 'max_budget' (a numerical or textual value in € or $) has been explicitly provided by the user. Hard constraints (brand, color, material) are OPTIONAL for generation.
+a. 'max_budget' (explicit or 0 if "don't care").
+b. 'image_intent' (what the user wants to do with the image).
 
-If the user explicitly states that he/she does not care about a specific budget, set the 'max_budget' to 0.
+1. **CHECK INTENT (Dynamic based on Image):**
+    - If 'image_intent' is **MISSING**:
+        - Set 'status' to 'AWAITING_INPUT'.
+        - **ANALYZE IMAGE:** Determine if it shows a **Full Outfit** (person wearing multiple items) or a **Single Item** (shoe, bag, accessory, or isolated garment).
+        - **Action:**
+            - **CASE A: Full Outfit** -> In 'missing_info', ask: "Are you looking to **replicate this exact outfit** or should we use this as **inspiration**?"
+            - **CASE B: Single Item** -> In 'missing_info', ask: "Are you looking for **something similar** or do you want to find items to **complete the look**?"
+        - **CRITICAL:** DO NOT ask for budget yet. DO NOT generate budget options.
 
-b. The user's 'image_intent'.
+2. **CHECK BUDGET (Only if Intent is Known):**
+    - If 'image_intent' is **PRESENT** but 'max_budget' is **MISSING**:
+        - Set 'status' to 'AWAITING_INPUT'.
+        - In 'missing_info', ASK ONLY FOR THE BUDGET. 
+        - **MANDATORY:** You MUST generate 4 distinct `budget_options`.
+        - **DESCRIPTION RULES:** The options must represent a "Max Budget" cap, NOT a range.
+        - **LABEL RULES:** The 'label' MUST be formatted as "Max €[amount]" (e.g. "Max €150") or "No Limit".
+        1. Lowest Cap -> Estimate a minimal budget for the requested items. Label: "Max €[amount]". Describe as "Essentials".
+        2. Mid Cap -> Estimate a moderate budget for the requested items. Label: "Max €[amount]". Describe as "Better Quality".
+        3. High Cap -> Estimate a generous budget for the requested items. Label: "Max €[amount]". Describe as "Complete Look".
+        4. "No Limit" (max_budget: 0) -> Label: "No Limit". Describe as "High-End / Luxury".
+        - **CRITICAL:** DO NOT ask for optional constraints, preferences, or number of outfit options in this step. Ask only for Budget.
 
-If the 'max_budget' or the 'user's intent' is missing, set the 'status' to 'AWAITING_INPUT' and provide a specific, conversational question in the 'missing_info' field. The question MUST ask the missing piece of information, also providing a tight budget range (in €) coherent with the user's request if the budget is missing, and it should also politely ask if the user has any OPTIONAL hard constraints.
+3. **CHECK OUTFIT OPTIONS (Only if Budget is Present):**
+    - If BOTH 'image_intent' AND 'max_budget' are **PRESENT** (this INCLUDES 0 / "No Limit"), check if the user has specified the number of outfit options.
+    - **Logic:**
+        - If the user has NOT YET specified the number of options (and 'num_outfits' is effectively unknown/default):
+            - Set 'status' to 'AWAITING_INPUT'.
+            - **MANDATORY:** You MUST generate `outfit_generation_options`.
+            - **CRITICAL:** Set `budget_options` to an EMPTY LIST `[]`. Do NOT regenerate budget options.
+
+            - **CASE A: Unlimited Budget (max_budget == 0):**
+                - In 'missing_info', ask: "Since budget is unlimited, would you like to see 1, 2, or 3 outfit options?"
+                - Generate SIMPLE Quantity Options:
+                    1. "1 Option" (value: "I want 1 outfit option")
+                    2. "2 Options" (value: "I want 2 outfit options")
+                    3. "3 Options" (value: "I want 3 outfit options")
+
+            - **CASE B: Finite Budget (max_budget > 0):**
+                - In 'missing_info', ask: "Would you like 1, 2, or 3 outfit options?"
+                - Generate Budget-Split Options:
+                    1. "1 Option" (value: "I want 1 outfit option")
+                    2. "3 Options (Same Budget)" (value: "I want 3 outfit options using the same max budget for each")
+                    3. "3 Options (Even Split)" (value: "I want 3 outfit options splitting the budget evenly")
+                    4. "3 Options (Uneven Split)" (value: "I want 3 outfit options splitting the budget unevenly")
+
+            - **CRITICAL:** DO NOT ask for preferences (colors, brands) in this step yet. ASK ONLY FOR THE OPTIONS.
+
+4. **CHECK PREFERENCES (Only if Options are Known):**
+    - If Budget, Intent, AND Options are known, check for preferences.
+    - **Logic:**
+        - If preferences are missing:
+            - Set 'status' to 'AWAITING_INPUT'.
+            - In 'missing_info', ask: "Do you have any specific preferences (e.g., brands, materials) or should I stick close to the image style?"
+            - **CRITICAL:** DO NOT generate `outfit_generation_options` here.
+        - If preferences are known or asked:
+            - Set 'status' to 'READY_TO_GENERATE'.
 
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
-
-If BOTH the 'max_budget' and the 'image_intent' are present, set the 'status' to 'READY_TO_GENERATE'.
 
 [STEP 2: OUTFIT GENERATION (Use OutfitSchema)]
 a. If the intent was to find matching items or complete the outfit shown, generate only the complementary items required to form a full, cohesive look.
@@ -274,6 +403,10 @@ If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 f
 2. Set the 'budget' field of EACH individual outfit to this calculated share.
 3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
 4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
+
+If the user specifies they want the SAME MAX BUDGET for each outfit (e.g. 'Use full budget for each', 'Same budget for all'), do NOT divide the budget. 
+**CRITICAL:** You MUST set the 'budget' field of EACH individual outfit to the FULL 'max_budget' amount.
+Example: Max Budget €300, 3 options "Same Budget" -> Each outfit has 'budget': 300.
 
 [REFINE & MODIFY LOGIC - MODULAR REFINEMENT]
 If the user asks to change, remove, or add items to the PREVIOUS OUTFIT, you must use 'refinement_type': 'REFINE_CURRENT' and populate the 'modifications' list.
@@ -327,8 +460,6 @@ GUARDRAIL: If the user's request is offensive towards any ethnicity, contains ha
 
 GUARDRAIL: If the user's request is NOT related to fashion, outfits, styles, or clothing, you MUST immediately stop and return the following JSON object ONLY:
 {'status': 'Guardrail', 'message': "I'm here to help with fashion-related inquiries. Please ask me about outfits, styles, or clothing recommendations"}
-
-The final output MUST be a single JSON object and nothing else.
 \n*** CRITICAL INSTRUCTION \n
 the field 'message' MUST BE PRESENT ONLY if a guardrail triggers.
 \n***********************
@@ -471,7 +602,9 @@ def generate_outfit_plan(
     base_prompt = IMAGE_SYSTEM_PROMPT if has_images else TEXTUAL_SYSTEM_PROMPT
 
     # --- 4. CHIAMATA API ---
+    # --- 4. CHIAMATA API ---
     try:
+        print("DEBUG: Calling generate_content...")
         response = client.models.generate_content(
             model = model_name,
             contents = gemini_history,
@@ -479,13 +612,17 @@ def generate_outfit_plan(
                 system_instruction = base_prompt,
                 response_mime_type = "application/json",
                 response_schema = input_gathering_schema,
-                temperature = 1.5
+                temperature = 1.0 # Reduced from 1.5 to be safer
             )
         )
+        print("DEBUG: generate_content returned. Parsing response...")
         dialogue_state = response.parsed
+        print(f"DEBUG: Response parsed. Status: {dialogue_state.get('status')}")
 
     except Exception as e:
         print(f"Error during dialogue state check: {e}")
+        import traceback
+        traceback.print_exc()
         return {'error': 'Failed to process dialogue state.'}
 
     # ... [IL RESTO DEL CODICE RIMANE UGUALE] ...
@@ -497,7 +634,9 @@ def generate_outfit_plan(
             'status': 'AWAITING_INPUT',
             'prompt_to_user': dialogue_state['missing_info'],
             'history': chat_history,
-            'conversation_title': dialogue_state.get('conversation_title')
+            'conversation_title': dialogue_state.get('conversation_title'),
+            'budget_options': dialogue_state.get('budget_options'), # Pass this through
+            'outfit_generation_options': dialogue_state.get('outfit_generation_options') # Pass this through
         }
 
     elif dialogue_state.get('status') == 'READY_TO_GENERATE':

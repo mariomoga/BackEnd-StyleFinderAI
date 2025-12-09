@@ -620,6 +620,8 @@ def send_message():
                 "outfits" : output.get("outfits", []),
                 "message" : text,
                 "explanation": output.get("explanation"),
+                "budget_options": output.get("budget_options"),
+                "outfit_generation_options": output.get("outfit_generation_options"),
             },
             "message_id": new_ai_response_id if is_authenticated and 'new_ai_response_id' in locals() else None
         }
