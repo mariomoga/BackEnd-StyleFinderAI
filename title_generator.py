@@ -1,13 +1,22 @@
 import os
 from google import genai
+from google.genai import types
 from dotenv import load_dotenv
+
+from ai.src.model_fallback import generate_content_with_fallback, get_default_model
 
 load_dotenv()
 
 API_KEY = os.environ.get("GEMINI_API_KEY")
-# genai.configure(api_key=API_KEY) # Not needed with new Client
 
-MODEL_NAME = "gemini-2.0-flash" # Updated model name as well to match others
+# Create client once at module level
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=API_KEY)
+    return _client
 
 def generate_title(prompt: str) -> str:
     prompt_text = (
@@ -17,15 +26,16 @@ def generate_title(prompt: str) -> str:
     )
 
     try:
-        print(f"Loading model: {MODEL_NAME}...")
+        client = _get_client()
+        
+        print("Sending request to Gemini (with fallback)...")
 
-        client = genai.Client(api_key=API_KEY)
-
-        print("Sending request to Gemini...")
-
-        response = client.models.generate_content(
-            model=MODEL_NAME, 
-            contents=prompt_text
+        config = types.GenerateContentConfig()
+        
+        response = generate_content_with_fallback(
+            client=client,
+            contents=prompt_text,
+            config=config
         )
 
         return str(response.text)

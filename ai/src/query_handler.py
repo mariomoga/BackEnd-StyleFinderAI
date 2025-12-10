@@ -1,6 +1,8 @@
 import json
 from google.genai import types, Client
 
+from ai.src.model_fallback import generate_content_with_fallback
+
 # --- Schema Definitions ---
 
 # Define the schema for an individual item (e.g., "shirt", "relaxed")
@@ -608,11 +610,11 @@ def generate_outfit_plan(
     # --- 4. CHIAMATA API ---
     # --- 4. CHIAMATA API ---
     try:
-        print("DEBUG: Calling generate_content...")
-        response = client.models.generate_content(
-            model = model_name,
-            contents = gemini_history,
-            config = types.GenerateContentConfig(
+        print("DEBUG: Calling generate_content (with fallback)...")
+        response = generate_content_with_fallback(
+            client=client,
+            contents=gemini_history,
+            config=types.GenerateContentConfig(
                 system_instruction = base_prompt,
                 response_mime_type = "application/json",
                 response_schema = input_gathering_schema,
@@ -651,10 +653,10 @@ def generate_outfit_plan(
         }]
 
         try:
-            final_response = client.models.generate_content(
-                model = model_name,
-                contents = final_generation_prompt,
-                config = types.GenerateContentConfig(
+            final_response = generate_content_with_fallback(
+                client=client,
+                contents=final_generation_prompt,
+                config=types.GenerateContentConfig(
                     system_instruction = base_prompt,
                     response_mime_type = "application/json",
                     response_schema = outfit_schema,

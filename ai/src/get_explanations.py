@@ -1,5 +1,7 @@
 from google.genai import types, Client
 
+from ai.src.model_fallback import generate_content_with_fallback
+
 SYSTEM_PROMPT = """
 You are an expert fashion stylist AI. Your task is to receive a user's request alongside the retrieved outfit that matches said request, and provide a justification for said outfit.
 
@@ -30,13 +32,13 @@ def explain_selected_outfit(CLIENT: Client, MODEL_NAME: str, user_prompt: str, r
         full_prompt = user_request_block + retrieved_outfit_block
     
         config = types.GenerateContentConfig(
-        system_instruction=SYSTEM_PROMPT
+            system_instruction=SYSTEM_PROMPT
         )
         
-        response = CLIENT.models.generate_content(
-            model=MODEL_NAME,
+        response = generate_content_with_fallback(
+            client=CLIENT,
             contents=[full_prompt],
-            config=config,
+            config=config
         )
         return response.text
     except Exception as e:

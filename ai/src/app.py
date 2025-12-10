@@ -54,7 +54,7 @@ except Exception as e:
     # Reraise the exception to stop the server process from starting
     raise RuntimeError("Failed to initialize the Google Gemini Client.") from e
 
-GEMINI_MODEL_NAME = 'gemini-2.0-flash'
+GEMINI_MODEL_NAME = 'gemini-2.5-pro'  # Fallback chain: 2.5-pro -> 2.5-flash -> 2.5-flash-lite (handled in model_fallback.py)
 
 # 3. CLIP Model Initialization (Heavy/Critical Resource)
 CLIP_MODEL_NAME = "patrickjohncyh/fashion-clip"
