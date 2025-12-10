@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Default fallback model sequence
 DEFAULT_FALLBACK_MODELS = [
-    "gemini-2.5-pro",           # Primary model
+    "gemini-2.0-flash",           # Primary model
     "gemini-2.5-flash",         # Fallback 1: faster variant
     "gemini-2.5-flash-lite",    # Fallback 2: lite variant
 ]
