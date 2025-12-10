@@ -138,7 +138,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
     # Inject budget context if refining
     final_prompt = user_prompt
     if target_outfit_budget:
-        final_prompt += f"\n(System Note: Refining outfit option #{target_index+1} which has a specific budget of {target_outfit_budget}. PRESERVE this budget.)"
+        final_prompt += f"\n(System Note: Refining outfit option #{target_index+1}. This specific option has a budget of {target_outfit_budget}. IMPORTANT: If the user asks to increase/decrease the budget, apply the change to THIS amount ({target_outfit_budget}), NOT the global history budget.)"
 
     response = generate_outfit_plan(
         GEMINI_CLIENT, 
@@ -443,7 +443,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         logging.warning("No outfits within budget found. Returning all (potentially over-budget) results or empty.")
 
     if not final_outfits_results:
-        return {"status": "Error", "message": "Failed to generate any valid outfits.", "status_code": 500}
+        return {"status": "Error", "message": "Sorry but we don't have anything in our catalog that suits your request. Would you like to try look for something else?", "status_code": 500}
 
     final_response = {
         'status': 'COMPLETED',

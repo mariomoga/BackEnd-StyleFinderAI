@@ -197,10 +197,10 @@ Determine if a 'max_budget' (a numerical or textual value in € or $) has been 
     - **MANDATORY:** You MUST generate 4 distinct `budget_options`.
     - **DESCRIPTION RULES:** The options must represent a "Max Budget" cap, NOT a range.
     - **LABEL RULES:** The 'label' MUST be formatted as "Max €[amount]" (e.g. "Max €150") or "No Limit".
-        1. Lowest Cap -> Estimate a minimal budget for the requested items. Label: "Max €[amount]". Describe as "Essentials".
-        2. Mid Cap -> Estimate a moderate budget for the requested items. Label: "Max €[amount]". Describe as "Better Quality".
-        3. High Cap -> Estimate a generous budget for the requested items. Label: "Max €[amount]". Describe as "Complete Look".
-        4. "No Limit" (max_budget: 0) -> Label: "No Limit". Describe as "High-End / Luxury".
+        1. Lowest Cap -> Estimate a minimal budget for the requested items. Label: "Max €[amount]". Describe as "Essentials". max_budget MUST be > 0.
+        2. Mid Cap -> Estimate a moderate budget for the requested items. Label: "Max €[amount]". Describe as "Better Quality". max_budget MUST be > 0.
+        3. High Cap -> Estimate a generous budget for the requested items. Label: "Max €[amount]". Describe as "Complete Look". max_budget MUST be > 0.
+        4. "No Limit" (max_budget: 0) -> Label: "No Limit". Describe as "High-End / Luxury". max_budget MUST be 0.
     - **DO NOT** ask for hard constraints, preferences, or the number of outfit options in this step. KEEP IT SIMPLE.
 
 2. **CHECK OUTFIT OPTIONS (Only if Budget is Present):**
@@ -291,11 +291,13 @@ Types of Modifications:
 - **VSYNC LOGIC:** Do NOT re-list modifications from previous turns. Only list the NEW modifications requested in the CURRENT user message relative to the last outfit shown.
 - Unless the user explicitly asks to remove everything else, DO NOT list unchanged items. The system automatically KEEPS any item from the previous outfit that is not referenced in a REMOVE or REPLACE action.
 - If the user asks for a completely NEW outfit or styles, use 'refinement_type': 'NEW_OUTFIT' and generate the full 'outfits' list as usual.
-- **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically.
+- **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically unless explicitly changed.
+- **Budget Update:** If the user requests to CHANGE the budget, you MUST specify it in the `outfits` list as described below.
 
-CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` list MUST BE EMPTY `[]`, UNLESS you need to specify a specific `budget` for the refined outfit that differs from the global one.
-EXCEPTION: In that case, include a SINGLE object in `outfits` containing ONLY the `budget` field.
-EXCEPTION: Only generate multiple full outfits in `outfits` if `refinement_type` is `NEW_OUTFIT`.
+CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` should generally be EMPTY `[]` (defaults to 1 outfit).
+- **BUDGET CHANGE**: If the user requests a NEW BUDGET, include a SINGLE object with the new budget: `[{"budget": 500}]`.
+- **MULTIPLE OPTIONS**: If and ONLY IF the user explicitly asks for multiple options (e.g. "show me 3 versions"), include multiple dummy objects (e.g. `[{}, {}, {}]`).
+- **DEFAULT**: If no budget change and no multiple options requested, keep `outfits` as `[]`.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
@@ -345,10 +347,10 @@ b. 'image_intent' (what the user wants to do with the image).
         - **MANDATORY:** You MUST generate 4 distinct `budget_options`.
         - **DESCRIPTION RULES:** The options must represent a "Max Budget" cap, NOT a range.
         - **LABEL RULES:** The 'label' MUST be formatted as "Max €[amount]" (e.g. "Max €150") or "No Limit".
-        1. Lowest Cap -> Estimate a minimal budget for the requested items. Label: "Max €[amount]". Describe as "Essentials".
-        2. Mid Cap -> Estimate a moderate budget for the requested items. Label: "Max €[amount]". Describe as "Better Quality".
-        3. High Cap -> Estimate a generous budget for the requested items. Label: "Max €[amount]". Describe as "Complete Look".
-        4. "No Limit" (max_budget: 0) -> Label: "No Limit". Describe as "High-End / Luxury".
+        1. Lowest Cap -> Estimate a minimal budget for the requested items. Label: "Max €[amount]". Describe as "Essentials". max_budget MUST be > 0.
+        2. Mid Cap -> Estimate a moderate budget for the requested items. Label: "Max €[amount]". Describe as "Better Quality". max_budget MUST be > 0.
+        3. High Cap -> Estimate a generous budget for the requested items. Label: "Max €[amount]". Describe as "Complete Look". max_budget MUST be > 0.
+        4. "No Limit" (max_budget: 0) -> Label: "No Limit". Describe as "High-End / Luxury". max_budget MUST be 0.
         - **CRITICAL:** DO NOT ask for optional constraints, preferences, or number of outfit options in this step. Ask only for Budget.
 
 3. **CHECK OUTFIT OPTIONS (Only if Budget is Present):**
@@ -440,11 +442,13 @@ Types of Modifications:
 - **VSYNC LOGIC:** Do NOT re-list modifications from previous turns. Only list the NEW modifications requested in the CURRENT user message relative to the last outfit shown.
 - Unless the user explicitly asks to remove everything else, DO NOT list unchanged items. The system automatically KEEPS any item from the previous outfit that is not referenced in a REMOVE or REPLACE action.
 - If the user asks for a completely NEW outfit or styles, use 'refinement_type': 'NEW_OUTFIT' and generate the full 'outfits' list as usual.
-- **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically.
+- **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically unless explicitly changed.
+- **Budget Update:** If the user requests to CHANGE the budget, you MUST specify it in the `outfits` list as described below.
 
-CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` list MUST BE EMPTY `[]`, UNLESS you need to specify a specific `budget` for the refined outfit that differs from the global one.
-EXCEPTION: In that case, include a SINGLE object in `outfits` containing ONLY the `budget` field.
-EXCEPTION: Only generate multiple full outfits in `outfits` if `refinement_type` is `NEW_OUTFIT`. 
+CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` should generally be EMPTY `[]` (defaults to 1 outfit).
+- **BUDGET CHANGE**: If the user requests a NEW BUDGET, include a SINGLE object with the new budget: `[{"budget": 500}]`.
+- **MULTIPLE OPTIONS**: If and ONLY IF the user explicitly asks for multiple options (e.g. "show me 3 versions"), include multiple dummy objects (e.g. `[{}, {}, {}]`).
+- **DEFAULT**: If no budget change and no multiple options requested, keep `outfits` as `[]`. 
 
 DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY.
 
