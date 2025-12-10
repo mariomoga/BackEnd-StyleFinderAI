@@ -5,6 +5,39 @@ from ai.src.model_fallback import generate_content_with_fallback
 
 # --- Schema Definitions ---
 
+color_schema = types.Schema(
+    type=types.Type.OBJECT,
+    description="Defines the target color(s) and their proportions/weights. Can be a single color or a mix for patterns.",
+    properties={
+        "name": types.Schema(
+            type=types.Type.STRING,
+            description="The descriptive name of the color or pattern combination (e.g., 'sky blue', 'tiger stripe', 'black and white')."
+        ),
+        "lab_colors": types.Schema(
+            type=types.Type.ARRAY,
+            description="A list of LAB color values with their respective weights found in the item. If the item is solid, this array contains one element (one [L,a,b]). If it is a pattern (e.g. tiger), it contains multiple elements (e.g. one [L,a,b] for orange, one [L,a,b] for black). These values are used for weighted similarity search (Euclidean for color match, L1 for weight match).",
+            items=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "lab": types.Schema(
+                        type=types.Type.ARRAY,
+                        description="The CIELAB color coordinate [L, a, b].",
+                        items=types.Schema(
+                            type=types.Type.NUMBER
+                        )
+                    ),
+                    "weight": types.Schema(
+                        type=types.Type.NUMBER,
+                        description="The dominance weight of this color (from 0.0 to 1.0)."
+                    )
+                },
+                required=["lab", "weight"]
+            )
+        )
+    },
+    required=["name", "lab_colors"]
+)
+
 # Define the schema for an individual item (e.g., "shirt", "relaxed")
 item_schema = types.Schema(
     type=types.Type.OBJECT,
@@ -20,7 +53,7 @@ category_schema = types.Schema(
     type=types.Type.OBJECT,
     description="A collection of item suggestions for a specific clothing category. If 'accessories' limit to sunglasses, caps/hats, scarves, gloves, watches or simple jewelry.",
     properties={
-        "color_palette": types.Schema(type=types.Type.STRING, description="A specific color or color description (e.g., 'sky blue', 'dark indigo')."),
+        "color_palette": color_schema,
         "pattern": types.Schema(type=types.Type.STRING, description="A specific pattern (e.g., 'solid', 'striped', 'gingham')."),
         "items": types.Schema(type=types.Type.ARRAY, items=item_schema, description="A list of specific items for this category.")
     },
@@ -128,7 +161,7 @@ modification_schema = types.Schema(
         "item_id": types.Schema(type=types.Type.STRING, description="The UUID string of the item in the current outfit to target (Required for REMOVE and REPLACE)."),
         "category": types.Schema(type=types.Type.STRING, description="The category of the item (Required for ADD and REPLACE)."),
         "new_item": item_schema, # Reuse item_schema for the new item definition
-        "new_color_palette": types.Schema(type=types.Type.STRING, description="Color palette for the new item (Required for ADD/REPLACE)"),
+        "new_color_palette": color_schema,
         "new_pattern": types.Schema(type=types.Type.STRING, description="Pattern for the new item (Required for ADD/REPLACE)"),
     },
     required=["action"]
@@ -761,7 +794,7 @@ def parse_outfit_plan(json_plan: dict, hard_constraints: dict | None) -> list[di
         if isinstance(category_data, dict) and 'items' in category_data:
             
             # Extract attributes from LLM (these are soft, stylistic suggestions)
-            category_color = category_data.get('color_palette', '').strip()
+            category_color = category_data.get('color_palette').get("name").strip()
             pattern = category_data.get('pattern', '').strip()
             
             # Iterate through individual items in the category
@@ -776,6 +809,7 @@ def parse_outfit_plan(json_plan: dict, hard_constraints: dict | None) -> list[di
                 
                 # The final list contains the LLM's stylistic prompt AND the hard constraints for database filtering
                 response_list.append({
+                    'lab_colors' : category_data.get('color_palette').get("lab_colors"),
                     'category': category_name,
                     'description': item_desc, 
                     'hard_constraints': constraints_for_category # <-- Database MUST enforce these

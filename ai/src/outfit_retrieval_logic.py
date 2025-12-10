@@ -66,7 +66,7 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
         query_obj = {
             "category": item['category'],
             "embedding": embedding_list,
-            "color": constraints.get("color"),
+            "lab_colors": item["lab_colors"],
             "material": constraints.get("material"),
             "brand": constraints.get("brand")
         }
@@ -74,10 +74,10 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
 
     try:
         response = client.rpc(
-            "search_outfits_batch",
+            "search_outfits_batch_v2",
             {
                 "queries": queries_payload,
-                "match_threshold": 0.1,
+                "match_threshold": 60,
                 "match_count": 20,
                 "max_espense": budget,
                 "gender": gender

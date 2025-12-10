@@ -54,7 +54,7 @@ except Exception as e:
     # Reraise the exception to stop the server process from starting
     raise RuntimeError("Failed to initialize the Google Gemini Client.") from e
 
-GEMINI_MODEL_NAME = 'gemini-2.5-pro'  # Fallback chain: 2.5-pro -> 2.5-flash -> 2.5-flash-lite (handled in model_fallback.py)
+GEMINI_MODEL_NAME = 'gemini-2.0-flash'  # Fallback chain: 2.5-pro -> 2.5-flash -> 2.5-flash-lite (handled in model_fallback.py)
 
 # 3. CLIP Model Initialization (Heavy/Critical Resource)
 CLIP_MODEL_NAME = "patrickjohncyh/fashion-clip"
@@ -355,9 +355,9 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                             search_item = {
                                 'category': category,
                                 'items': [new_item_def], # The schema has 'items' list inside category
-                                'color_palette': mod.get('new_color_palette', ''),
+                                'lab_colors': mod.get('new_color_palette').get('lab_colors'),
                                 'pattern': mod.get('new_pattern', ''),
-                                'description': f"{mod.get('new_color_palette', '')} {mod.get('new_pattern', '')} {new_item_def.get('tag')} {new_item_def.get('fit')}".strip()
+                                'description': f"{mod.get('new_color_palette', '').get('name')} {mod.get('new_pattern', '')} {new_item_def.get('tag')} {new_item_def.get('fit')}".strip()
                             }
                             
                             logging.info(f"Action {action}: Adding new search for {search_item['description']}")
