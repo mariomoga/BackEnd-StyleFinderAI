@@ -301,6 +301,13 @@ If the user specifies a 'total' budget for ALL outfits combined (e.g., '€600 f
 3. Ensure the sum of all individual outfit budgets does not exceed the user's total cap.
 4. Do NOT set the global 'max_budget' to the total amount if it is meant to be shared; use the per-outfit 'budget' fields instead.
 
+
+The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
+
+An outfit should contain by default at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request. If the user is reqeusting specific clothing items it should include only those instead.
+
+The final output should be a list of outfits in the 'outfits' field.
+
 If the user specifies they want the SAME MAX BUDGET for each outfit (e.g. 'Use full budget for each', 'Same budget for all'), do NOT divide the budget. 
 **CRITICAL:** You MUST set the 'budget' field of EACH individual outfit to the FULL 'max_budget' amount.
 Example: Max Budget €300, 3 options "Same Budget" -> Each outfit has 'budget': 300.
