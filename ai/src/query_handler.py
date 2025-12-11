@@ -818,7 +818,7 @@ def parse_outfit_plan(json_plan: dict, hard_constraints: dict | None) -> list[di
         if isinstance(category_data, dict) and 'items' in category_data:
             
             # Extract attributes from LLM (these are soft, stylistic suggestions)
-            category_color = category_data.get('color_palette', '').strip()
+            category_color = category_data.get('color_palette').get('name').strip()
             pattern = category_data.get('pattern', '').strip()
             
             # Iterate through individual items in the category
@@ -833,6 +833,7 @@ def parse_outfit_plan(json_plan: dict, hard_constraints: dict | None) -> list[di
                 
                 # The final list contains the LLM's stylistic prompt AND the hard constraints for database filtering
                 response_list.append({
+                    'lab_colors' : category_data.get('color_palette').get("lab_colors"),
                     'category': category_name,
                     'description': item_desc, 
                     'hard_constraints': constraints_for_category # <-- Database MUST enforce these
