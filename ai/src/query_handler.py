@@ -270,6 +270,9 @@ Determine if a 'max_budget' (a numerical or textual value in € or $) has been 
             - Set 'status' to 'AWAITING_INPUT'.
             - In 'missing_info', ask: "Great! Do you have any specific preferences for colors, materials, or brands?"
             - **DO NOT** generate `outfit_generation_options` here.
+        - if preferences are provided but invalid (e.g., the user specifies a color or a brand that doesn't exist)
+            - Set 'status' to 'AWAITING_INPUT'.
+            - In 'missing_info', specify the invalid preference and why it is invalid, and await a new response.
         - If the user has already provided preferences OR explicitly said "no preferences" OR if you have already asked this question:
             - Set 'status' to 'READY_TO_GENERATE'.
 

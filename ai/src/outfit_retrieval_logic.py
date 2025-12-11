@@ -77,7 +77,7 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
             "search_outfits_batch_v2",
             {
                 "queries": queries_payload,
-                "match_threshold": 60,
+                "match_threshold": 40,
                 "match_count": 20,
                 "max_espense": budget,
                 "gender": gender
@@ -106,8 +106,14 @@ def search_product_candidates_with_vector_db(client: Client, parsed_item_list: L
             candidates_list = item_candidates_df.drop(columns=['query_index']).to_dict('records')
             all_candidates.append(candidates_list)
 
+        for category in all_candidates:
+            for candidate in category:
+                print(f"{candidate['final_score']} | {candidate['id']} | {candidate['image_link']}")
+        else:
+            print("No candidates found.")
         return all_candidates
 
     except Exception as e:
         print(f"Supabase Batch RPC search error: {e}")
+        raise e
         return [{"error": f"Database error: {str(e)}"}]
