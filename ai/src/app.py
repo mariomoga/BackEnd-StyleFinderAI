@@ -260,6 +260,9 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
              last_outfit = last_outfit['outfit']
         logging.info(f"DEBUG: Found last outfit with {len(last_outfit)} items.")
 
+    # 3. Initialize Global Diversity Tracker
+    global_used_item_ids = set()
+
     for i, outfit_plan in enumerate(outfits_list):
         # --- BUDGET HANDLING ---
         # 1. Check for specific outfit budget
@@ -271,8 +274,15 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
         # B) Otherwise, use the global budget.
         if not current_outfit_budget or current_outfit_budget == 0:
             if refinement_type == 'REFINE_CURRENT' and target_outfit_budget:
-                 current_outfit_budget = target_outfit_budget
-                 logging.info(f"DEBUG: Using preserved budget {current_outfit_budget} from previous outfit for refinement.")
+                 # Check for override: If user explicitly mentions budget keywords AND the global budget has changed
+                 is_budget_query = any(kw in user_prompt.lower() for kw in ["budget", "price", "cost", "spend", "euro", "€", "$", "cheap", "expensive"])
+                 
+                 if is_budget_query and budget and budget > 0 and budget != target_outfit_budget:
+                     current_outfit_budget = budget
+                     logging.info(f"DEBUG: Override! User matched budget keywords and global budget {budget} != old {target_outfit_budget}. Using new global budget.")
+                 else:
+                     current_outfit_budget = target_outfit_budget
+                     logging.info(f"DEBUG: Using preserved budget {current_outfit_budget} from previous outfit for refinement.")
             else:
                  current_outfit_budget = budget
             
@@ -300,6 +310,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
             modifications = response.get('modifications', [])
             
             logging.info(f"Refinement Type: {refinement_type}, Modifications: {len(modifications)}")
+            logging.info(f"STARTING LOOP {i}: last_outfit items count: {len(last_outfit) if last_outfit else 0}")
     
             all_candidates = []
             items_to_search = []
@@ -313,6 +324,8 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                     item_id = item.get('id')
                     if item_id:
                          active_previous_items[str(item_id)] = item
+            
+            logging.info(f"Active Previous Items Initial: {list(active_previous_items.keys())}")
     
             parsed_item_list_for_search = []
     
@@ -329,6 +342,8 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                         else:
                             logging.warning(f"Action {action}: Target ID {target_id} not found in previous outfit.")
                 
+                logging.info(f"Active Previous Items After Mod: {list(active_previous_items.keys())}")
+
                 # 2. Add remaining (unchanged) items as LOCKED candidates
                 # These are items that were in last_outfit and NOT removed/replaced
                 for locked_item in active_previous_items.values():
@@ -398,10 +413,29 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                 if search_results:
                     # If search_results is shorter than items_to_search (error?), handle it.
                     # Assuming 1-to-1 mapping if no error.
-                    for j, result in enumerate(search_results):
+                    for j, result_candidates in enumerate(search_results):
                         if j < len(indices_to_search):
                             original_idx = indices_to_search[j]
-                            all_candidates[original_idx] = result
+                            
+                            # --- DIVERSITY LOGIC START ---
+                            # Filter candidates to prefer UNUSED items
+                            filtered_candidates = []
+                            if result_candidates:
+                                for cand in result_candidates:
+                                    # If candidate ID is not in global used set, keep it
+                                    # Note: candidates are dists, need 'id' or 'product_id'
+                                    c_id = cand.get('id')
+                                    if c_id not in global_used_item_ids:
+                                        filtered_candidates.append(cand)
+                                
+                                # If we filtered everything, fallback to original candidates (reuse allowed if no other choice)
+                                if not filtered_candidates:
+                                    logging.info(f"Diversity Warning: All candidates for item {j} used. Resetting filter.")
+                                    filtered_candidates = result_candidates
+                            
+                            logging.info(f"Assigned {len(filtered_candidates)} candidates to slot {original_idx}")
+                            all_candidates[original_idx] = filtered_candidates
+                            # --- DIVERSITY LOGIC END ---
                 
             # Check for retrieval errors in unlocked items
             if any(c and 'error' in c[0] for c in all_candidates if c and isinstance(c, list) and len(c)>0 and isinstance(c[0], dict)):
@@ -415,7 +449,7 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
                 continue
 
             # 4. OUTFIT ASSEMBLY
-            logging.info("Assembling outfit...")
+            logging.info(f"Assembling outfit with {len(all_candidates)} slots...")
             (feasible_outfit, remaining_budget, best_full_outfit, best_full_cost) = get_outfit(all_candidates, current_outfit_budget)
             
             final_result_single = select_final_outfit_and_metrics(all_candidates, current_outfit_budget, feasible_outfit, remaining_budget, best_full_outfit, best_full_cost)
@@ -426,6 +460,14 @@ def outfit_recommendation_handler(user_prompt: str, chat_history: List[Dict[str,
             
             logging.info(f"Outfit {i+1} result: Cost={final_result_single.get('cost')}, Budget={current_outfit_budget}, Remaining={final_result_single.get('remaining_budget')}")
             final_outfits_results.append(final_result_single)
+
+            # Update Global Diversity Tracker
+            if final_result_single and 'outfit' in final_result_single:
+                for item in final_result_single['outfit']:
+                     # We track ALL items used in this valid outfit
+                     item_id = item.get('id')
+                     if item_id:
+                         global_used_item_ids.add(item_id)
         
         except Exception as e:
             import traceback

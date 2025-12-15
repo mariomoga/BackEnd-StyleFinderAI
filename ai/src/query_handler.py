@@ -96,11 +96,26 @@ input_gathering_schema = types.Schema(
         "outfit_generation_options": types.Schema(
             type=types.Type.ARRAY,
             items=outfit_generation_option_schema,
-            description="A list of options for the user to choose the number of outfits and budget split. Generate these ONLY if budget is known but outfit count/preference is not."
+            description="A list of options for the user to choose the number of outfits or specific style variations. Use this to propose 3 specific themes + 'All 3' when appropriate."
         ),
     },
     #required=["status", "missing_info", "max_budget", "hard_constraints"]
     required=["status"]
+)
+
+# 3. Modification Schema for Refinement
+modification_schema = types.Schema(
+    type=types.Type.OBJECT,
+    description="A specific modification action to apply to the current outfit context.",
+    properties={
+        "action": types.Schema(type=types.Type.STRING, enum=["ADD", "REMOVE", "REPLACE"], description=" The type of modification."),
+        "item_id": types.Schema(type=types.Type.STRING, description="The UUID string of the item in the current outfit to target (Required for REMOVE and REPLACE)."),
+        "category": types.Schema(type=types.Type.STRING, description="The category of the item (Required for ADD and REPLACE)."),
+        "new_item": item_schema, # Reuse item_schema for the new item definition
+        "new_color_palette": types.Schema(type=types.Type.STRING, description="Color palette for the new item (Required for ADD/REPLACE)"),
+        "new_pattern": types.Schema(type=types.Type.STRING, description="Pattern for the new item (Required for ADD/REPLACE)"),
+    },
+    required=["action"]
 )
 
 # 1. New Schema for ONLY the Outfit Categories (The nested 'outfit_plan')
@@ -117,21 +132,6 @@ outfit_categories_schema = types.Schema(
         "accessories": category_schema,
         "budget": types.Schema(type=types.Type.NUMBER, description="Contains the suggested clothing items and accessories for a specific outfit option, including an optional specific budget."),
     },
-)
-
-# 3. Modification Schema for Refinement
-modification_schema = types.Schema(
-    type=types.Type.OBJECT,
-    description="A specific modification action to apply to the current outfit context.",
-    properties={
-        "action": types.Schema(type=types.Type.STRING, enum=["ADD", "REMOVE", "REPLACE"], description=" The type of modification."),
-        "item_id": types.Schema(type=types.Type.STRING, description="The UUID string of the item in the current outfit to target (Required for REMOVE and REPLACE)."),
-        "category": types.Schema(type=types.Type.STRING, description="The category of the item (Required for ADD and REPLACE)."),
-        "new_item": item_schema, # Reuse item_schema for the new item definition
-        "new_color_palette": types.Schema(type=types.Type.STRING, description="Color palette for the new item (Required for ADD/REPLACE)"),
-        "new_pattern": types.Schema(type=types.Type.STRING, description="Pattern for the new item (Required for ADD/REPLACE)"),
-    },
-    required=["action"]
 )
 
 # 2. Revised Main Outfit Generation Schema (The LLM's full output)
@@ -211,7 +211,9 @@ Determine if a 'max_budget' (a numerical or textual value in € or $) has been 
         - **DO NOT** generate `outfit_generation_options` here.
         - **DO NOT** generate `budget_options` here.
     - **CRITICAL REFINEMENT:** Generic terms like "weekend", "party", "dinner", "date", or "work" are **INSUFFICIENT** on their own. You MUST accept them only if accompanied by a Vibe or Setting (e.g., "Cozy weekend at home" is okay; just "weekend" is NOT).
-    - If the input is vague (e.g., just "outfit for weekend"), you MUST set 'status' to 'AWAITING_INPUT' and ask for clarification, **EVEN IF** the budget is already provided.
+    - If the input is vague (e.g., just "outfit for weekend", "going to a party"), you MUST set 'status' to 'AWAITING_INPUT' and ask for clarification, **EVEN IF** the budget is already provided.
+    - **PROACTIVE CLARIFICATION:** When asking, you MUST suggest specific, relevant examples to guide the user (e.g., "What kind of party is it? A formal cocktail event? A casual garden party? A house warmer?").
+    - **STRICT PROHIBITION:** You are **FORBIDDEN** from moving to Step 2 (Proactive Options) if the occasion is generic. You must first resolve the specific type of event.
     - **CRITICAL:** If you need to ask ANY clarifying questions about the Setting, Occasion, Context, or Vibe (even minor ones like "corporate or creative?"), you MUST STOP HERE.
         - Set 'status' to 'AWAITING_INPUT'.
         - Ask ONLY for the style clarification.
@@ -220,20 +222,30 @@ Determine if a 'max_budget' (a numerical or textual value in € or $) has been 
     - Only if the user has ALREADY provided specific and clear context regarding the setting, occasion, or vibe in the conversation history AND you require NO further clarification:
         - Proceed to the next step.
 
-2. **CHECK OUTFIT OPTIONS (Only if Style/Occasion is FULLY Resolve):**
+2. **CHECK OUTFIT OPTIONS (Only if Style/Occasion is FULLY Resolved):**
     - **Pre-condition:** You are ONLY allowed to be in this step if you have ZERO doubts about the Style, Occasion, and Setting.
+    - **GENERIC FALLBACK:** If the occasion is still generic (e.g. just "Party"), you MUST return to Step 1 and ask for clarification.
     - **STRICT NEGATIVE CONSTRAINT:** If you are asking ANY clarifying questions about Style, Occasion, or Context (Step 1), you MUST STOP there. Do NOT ask for options in the same message.
-    - **HISTORY SCAN (CRITICAL):** Scan ALL previous user messages (especially the FIRST one) for numbers (word or digit) associated with "option", "options", "outfit", "outfits", "style", "styles", "look", "looks", "version", "versions".
-    - **Example:** "3 different option", "show me two", "3 options", "a couple of outfits" -> SET 'num_outfits' to 3.
-    - **ACTION:** If found ANYWHERE in history, SKIP this step.
-    - Only if the user has TRULY NOT specified the number of options anywhere in the history:
+    - **HISTORY SCAN (CRITICAL):** Scan ALL previous user messages.
+    - **SELECTION CHECK:** If the user has ALREADY selected an option or indicated their preference explicitly (e.g., "Option 1", "Show me all 3", "I want the classic look"), SKIP this step and proceed to Budget/Generation.
+    - **QUANTITY CHECK:** If the user has explicitly asked for a specific quantity of options (e.g. "give me 3 choices", "show all 3"), SKIP this step.
+    - **SINGLE OPTION EXCEPTION:** ONLY if the user has *explicitly* requested a single option (e.g. "just one look", "give me your best recommendation"), set `outfit_generation_options` to `[]` and proceed to Step 3 (Budget).
+    - **DEFAULT ACTION (PROACTIVE POLL):** Unless the user explicitly asked for a single outfit, you MUST proactively proposed ideas.
+        - **DECISION:** Present the "Style Selection Poll".
+        - **MANDATORY:** Generate 4 `outfit_generation_options`.
+            - Options 1-3: Highly specific, visual themes based on the occasion. **FORBIDDEN:** Do not use labels like "Option 1", "Style 1", "Classic", "Modern", or "Bold". You MUST use vivid, descriptive names like "Velvet Elegance", "Sharp Minimalist", "Sequin Glamour".
+                 - id: "option_1", "option_2", "option_3"
+                 - Label: specific name (e.g. "Velvet Elegance").
+                 - Value: "Show me the [Style] look".
+                 - Description: "A specific description of the key pieces (e.g. 'Midnight blue velvet blazer with gold accents')."
+            - Option 4: "All 3".
+                 - id: "option_all"
+                 - Label: "Show All 3".
+                 - Value: "Show me all 3 options".
+                 - Description: "See all proposed styles at once."
         - Set 'status' to 'AWAITING_INPUT'.
-        - **MANDATORY:** Set `outfit_generation_options` to `[]` (EMPTY LIST). DO NOT GENERATE BUTTONS.
-        - **CRITICAL:** Set `budget_options` to `[]` (EMPTY LIST).
-        - **In 'missing_info'**, ask dynamically: "For your [Context], I can put together one killer [Vibe] look, or if you'd like variety, I can suggest 3 different takes: maybe one [Option A], one [Option B], and one [Option C]. Which sounds better to you?"
-        - **CREATIVE INSTRUCTION:** You MUST propose **specific, creative ideas** for the variations based on the user's vibe/request. Avoid dry, generic choices.
-        - **Example:** "Ooh, sassy and bright! I can do one killer neon look, or if you want variety, maybe I show you 3 options—one neon, one metallic, and one with bold prints? What do you think?"
-        - **CRITICAL:** DO NOT ask for budget in this step yet.
+        - In 'missing_info', proactively pitch the ideas: "Great! For the occasion, I have 3 directions we could go: [Option 1 Name], [Option 2 Name], or [Option 3 Name]. Which one speaks to you? ✨"
+        - **CRITICAL:** STOP HERE. DO NOT ask for budget yet. This poll is your priority.
 
 3. **CHECK BUDGET (Only if Options are Resolved):**
     - **Pre-condition:** 'num_outfits' is KNOWN (or you have decided to default to 1 if user didn't care).
@@ -273,6 +285,8 @@ If the user asks to change, remove, or add items to the PREVIOUS OUTFIT, you mus
 * "change", "replace", "swap", "switch", "instead of"
 * "add", "include", "wear", "put on"
 
+**EXCEPTION**: If the user asks for **MULTIPLE OPTIONS** or **VARIATIONS** (e.g. "show me 3 versions", "give me choices", "3 types of shoes"), you MUST use `refinement_type: 'NEW_OUTFIT'` and generate distinct full outfit objects. DO NOT use `REFINE_CURRENT`.
+
 The 'outfits' field should be left EMPTY [] when using REFINE_CURRENT, because the backend will reconstruct the outfit based on your modifications.
 
 Types of Modifications:
@@ -298,16 +312,20 @@ Types of Modifications:
 - Unless the user explicitly asks to remove everything else, DO NOT list unchanged items. The system automatically KEEPS any item from the previous outfit that is not referenced in a REMOVE or REPLACE action.
 - If the user asks for a completely NEW outfit or styles, use 'refinement_type': 'NEW_OUTFIT' and generate the full 'outfits' list as usual.
 - **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically unless explicitly changed.
-- **Budget Update:** If the user requests to CHANGE the budget, you MUST specify it in the `outfits` list as described below.
+- **Budget Update:** If the user requests to CHANGE the budget, you MUST specify it in the `outfits` list as described below. This is the ONLY way to update the budget for the current outfit.
 
 CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` should generally be EMPTY `[]` (defaults to 1 outfit).
-- **BUDGET CHANGE**: If the user requests a NEW BUDGET, include a SINGLE object with the new budget: `[{"budget": 500}]`.
-- **MULTIPLE OPTIONS**: If and ONLY IF the user explicitly asks for multiple options (e.g. "show me 3 versions"), include multiple dummy objects (e.g. `[{}, {}, {}]`).
+- **BUDGET CHANGE**: If the user requests a NEW BUDGET (e.g. "change budget to 500", "make it cheaper"), include a SINGLE object with the new budget: `[{"budget": 500}]`. THIS IS MANDATORY if budget is mentioned.
 - **DEFAULT**: If no budget change and no multiple options requested, keep `outfits` as `[]`.
 
 If the user is asking for specific clothing items, you should include ONLY the clothing items requested by the user AND NOTHING ELSE. 
 
-DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY. This does not apply to 'accessories', 'tops' (only if asking for  a hoodie/sweatshirt and t shirt since they are both in top) or 'swimwear' (since women biking includes a upper and lower piece if not requested a single piece costume).
+**STRICT CONSTRAINT:** You MUST NOT include more than 1 item per category (e.g. 1 pair of shoes, 1 trousers) within a SINGLE outfit object.
+- **VARIATIONS**: If the user asks for "3 options of shoes", you MUST generate 3 SEPARATE OUTFIT objects in the 'outfits' list, each containing 1 pair of shoes. DO NOT list 3 pairs of shoes in one outfit.
+- **EXCEPTIONS**: You may include multiple items ONLY for:
+  1. 'accessories' (e.g. hat + sunglasses)
+  2. 'top' (ONLY if layering, e.g. T-shirt + Jacket/Sweater)
+  3. 'swimwear' (bikini top + bottom)
 
 If constraints are missing, assume flexibility and generate a well-curated outfit that fits the occasion and budget. 
 
@@ -349,13 +367,25 @@ b. 'image_intent' (what the user wants to do with the image).
         - Set 'status' to 'AWAITING_INPUT'.
         - **ANALYZE IMAGE:** Determine if it shows a **Full Outfit** (person wearing multiple items) or a **Single Item** (shoe, bag, accessory, or isolated garment).
         - **Action:**
-            - **CASE A: Full Outfit** -> In 'missing_info', ask naturally: "Do you want me to replicate this exact look, or just use it as inspiration?"
-            - **CASE B: Single Item** -> In 'missing_info', ask naturally: "Are you looking for this specific item, or do you need things to go with it?"
+            - **CASE A: Full Outfit** -> In 'missing_info', ask naturally: "Love the photo! Do you want to steal this exact look, or just use the vibe as inspiration? ✨"
+            - **CASE B: Single Item** -> In 'missing_info', ask naturally: "Wow, that piece is a statement! 🌟 Are you looking to find this exact one, or do you need the perfect outfit to style around it?"
         - **CRITICAL:** DO NOT ask for budget yet. DO NOT generate budget options.
 
 2. **CHECK STYLE & OCCASION (Only if Intent is Known):**
      - If Intent is KNOWN, check if the style/occasion context is clear.
      - **Logic:**
+        - **VARIANT CHECK:** If the user wants a "variant", "twist", "alternative", or "inspiration" based on the image:
+            - **SKIP OCCASION:** You do NOT need to ask for the occasion/setting.
+             - If specific variance details are MISSING (e.g. they just said "make a variant"):
+                  - Set 'status' to 'AWAITING_INPUT'.
+                  - **PROACTIVE CLARIFICATION:** Ask for the direction with examples: "Got it! How do you want to tweak the look? Should we make it more casual? Change the color palette? Or just modernize the silhouette?"
+                  - STOP HERE.
+        - **COMPLETION CHECK:** If the user wants to "complete the look", "find matching items", or "style this piece":
+             - **SKIP OCCASION:** You do NOT need to ask for the occasion/setting unless it helps define the style.
+             - If specific style goals are MISSING:
+                  - Set 'status' to 'AWAITING_INPUT'.
+                  - **PROACTIVE CLARIFICATION:** Ask for the vibe of the *rest* of the outfit: "I can see this piece working in so many ways! Do you want to lean into a streetwear vibe, keep it elegant and minimal, or go for something bold?"
+                  - STOP HERE.
         - If the user has NOT mentioned the **Setting, Occasion, or Look**, AND the intent doesn't strictly imply it (e.g. "exact replica" implies image style):
             - Set 'status' to 'AWAITING_INPUT'.
             - In 'missing_info', ask in a friendly, engaging, and **context-aware** way to capture the missing Setting, Occasion, or Look.
@@ -363,6 +393,8 @@ b. 'image_intent' (what the user wants to do with the image).
             - **CRITICAL:** DO NOT generate `outfit_generation_options` here.
             - **CRITICAL:** DO NOT generate `budget_options` here.
         - **CRITICAL REFINEMENT:** Generic terms like "weekend", "party", "dinner", "date", or "work" are **INSUFFICIENT** on their own. You MUST accept them only if accompanied by a Vibe or Setting.
+        - **PROACTIVE CLARIFICATION:** When asking, you MUST suggest specific, relevant examples to guide the user (e.g., "What kind of party is it? A formal cocktail event? A casual garden party? A house warmer?").
+        - **STRICT PROHIBITION:** You are **FORBIDDEN** from moving to Step 3 (Proactive Options) if the occasion is generic. You must first resolve the specific type of event.
         - **CRITICAL:** If you need to ask ANY clarifying questions about the Setting, Occasion, Context, or Vibe, you MUST STOP HERE.
              - Set 'status' to 'AWAITING_INPUT'.
              - Ask ONLY for the style clarification.
@@ -373,19 +405,34 @@ b. 'image_intent' (what the user wants to do with the image).
 
 3. **CHECK OUTFIT OPTIONS (Only if Style is Resolved):**
     - **Pre-condition:** You are ONLY allowed to be in this step if you have ZERO doubts about the Intent, Style, Occasion, and Setting.
+    - **GENERIC FALLBACK:** If the occasion is still generic (e.g. just "Party"), you MUST return to Step 2 and ask for clarification.
     - **STRICT NEGATIVE CONSTRAINT:** If you are asking ANY clarifying questions about Style/Context (Step 2), you MUST STOP there. Do NOT ask for options in the same message.
-    - If Intent is KNOWN and Style is Resolved, check if the user has specified the number of outfit options.
-    - **HISTORY SCAN (CRITICAL):** Scan ALL previous user messages (especially the FIRST one) for numbers (word or digit) associated with "option", "options", "outfit", "outfits", "style", "styles", "look", "looks", "version", "versions".
-    - **Example:** "3 different option", "show me two", "3 options", "a couple of outfits" -> SET 'num_outfits' to 3.
-    - **ACTION:** If found ANYWHERE in history, SKIP this step.
-    - Only if the user has TRULY NOT specified the number of options anywhere in the history:
+    - **HISTORY SCAN (CRITICAL):** Scan ALL previous user messages.
+    - **SELECTION CHECK:** If the user has ALREADY selected an option or indicated their preference explicitly (e.g., "Option 1", "Show me all 3", "I want the classic look"), SKIP this step.
+    - **QUANTITY CHECK:** If the user has explicitly asked for a specific quantity of options (e.g. "give me 3 choices", "show all 3"), SKIP this step.
+    - **SINGLE OPTION EXCEPTION:** ONLY if the user has *explicitly* requested a single option (e.g. "just one look", "exact match only"), set `outfit_generation_options` to `[]` and proceed to Step 4 (Budget).
+    - **DEFAULT ACTION (PROACTIVE POLL):** Unless the user explicitly asked for a single outfit, you MUST proactively proposed ideas.
+        - **DECISION:** Present the "Style Selection Poll".
+        - **MANDATORY:** Generate 4 `outfit_generation_options`.
+            - **CASE A: ITEM MODIFICATION (e.g. "change the corset", "I want a jacket"):**
+                - Options 1-3: Variations of **THAT SPECIFIC ITEM** that **STYLISHLY COMPLEMENT** the rest of the look.
+                     - **CRITICAL:** The new item MUST work well with the other unchanged items (e.g. if wearing tailored trousers, suggest items that fit that silhouette). DO NOT suggest random or clashing items.
+                     - Label: Specific Item Style (e.g. "Cropped Blazer", "Silk Blouse").
+                     - Value: "Show me the look with [Item Style]".
+                     - Description: "Swap the [Item] for a [Description] that keeps the sleek vibe."
+            - **CASE B: GENERAL STYLE (e.g. "make it cooler", "variants"):**
+                - Options 1-3: Highly specific, visual themes based on the image and occasion. **FORBIDDEN:** Do not use labels like "Option 1", "Style 1". Use vivid descriptors.
+                     - Label: Specific Name (e.g. "Streetwear Edge").
+                     - Value: "Show me the [Style] look".
+                     - Description: "A specific description of the key items."
+            - Option 4: "All 3".
+                 - id: "option_all"
+                 - Label: "Show All 3".
+                 - Value: "Show me all 3 options".
+                 - Description: "See all proposed styles at once."
         - Set 'status' to 'AWAITING_INPUT'.
-        - **MANDATORY:** Set `outfit_generation_options` to `[]` (EMPTY LIST). DO NOT GENERATE BUTTONS.
-        - **CRITICAL:** Set `budget_options` to `[]` (EMPTY LIST).
-        - **In 'missing_info'**, ask dynamically: "Based on this image, I can create one faithful recreation, or if you're feeling adventurous, I can suggest 3 interpretations: maybe one [Idea A], one [Idea B], and one [Idea C]. What do you think?"
-        - **CREATIVE INSTRUCTION:** You MUST propose **specific, creative ideas** for the variations based on the image style and user vibe. Avoid dry, generic choices.
-        - **Example:** "I love this vintage vibe! I can find an exact match, or I can give you 3 options: one fully retro, one modern twist, and one minimalist take. What do you prefer?"
-        - **CRITICAL:** DO NOT ask for budget in this step yet.
+        - In 'missing_info', proactively pitch the ideas: "To match this vibe, I have 3 ideas: [Option 1 Name], [Option 2 Name], or [Option 3 Name]. What do you think?"
+        - **CRITICAL:** STOP HERE. DO NOT ask for budget yet. This poll is your priority.
 
 4. **CHECK BUDGET (Only if Options are Resolved):**
     - If 'image_intent' is **PRESENT** but 'max_budget' is **MISSING**:
@@ -407,12 +454,27 @@ b. 'image_intent' (what the user wants to do with the image).
 Make sure that, if the user's specifies any constraints, that they are applied ONLY TO THE SPECIFIED CLOTHING ITEMS.
 
 [STEP 2: OUTFIT GENERATION (Use OutfitSchema)]
-a. If the intent was to find matching items or complete the outfit shown, generate only the complementary items required to form a full, cohesive look.
-b. If the intent was to find an outfit in the same style or aesthetic as the image, generate a full, coherent outfit that captures the overall fashion sense of the image.
+a. **EXACT ITEM MATCH:** If the user wants to find the SPECIFIC item shown in the image (e.g., "find this shirt", "I want this bag"):
+    - **CASE 1: SINGLE ITEM FOCUSED:** If the user specifically asks for *one* piece (e.g. "where is this top from?"), generate **ONLY** that item.
+    - **CASE 2: FULL LOOK:** If the user asks for the *whole outfit* (e.g. "find this outfit", "steal this look") and the image shows a full outfit, generate **ALL** visible items (Top, Bottom, Shoes, etc.).
+    - **CRITICAL:** Do NOT hallucinate items not visible in the image.
+
+b. **COMPLETE THE OUTFIT:** If the user has an item (shown in image) and wants to find things to go with it:
+    - **CRITICAL EXCLUSION:** DO NOT generate a new item for the category already shown in the image.
+    - Use the image item as the anchor and generate **ONLY** the missing complementary items to complete the look.
+
+c. **STYLE INSPIRATION:** If the intent was to find an outfit in the same style or aesthetic as the image, generate a full, coherent outfit that captures the overall fashion sense of the image.
+
+d. **VARIANT GENERATION (Specific Item Option):** If you are generating multiple options for a specific item swap (e.g. "3 different jackets for this look"):
+    - **CRITICAL:** You MUST generate 3 COMPLETE OUTFITS.
+    - **MANDATORY COPY:** You must COPY the text description of the UNCHANGED items (e.g. trousers, shoes from the previous turn) into EACH of the 3 outfit objects.
+    - **RESULT:** Each object in the 'outfits' list must be a full outfit plan (e.g. Jacket A + Pants + Shoes, Jacket B + Pants + Shoes, etc.).
+    - **FORBIDDEN:** Do NOT return objects containing *only* the new item. The backend does not auto-merge in `NEW_OUTFIT` mode for multiple options.
 
 ONLY if the 'status' would be 'READY_TO_GENERATE', you MUST switch modes and generate the final outfit plan using the standard OutfitSchema. The final output MUST NOT contain the status/missing_info fields in this case.
 The final output MUST include the 'max_budget' (extracted from history) and 'hard_constraints' fields at the top level.
-The final output should be a full outfit by default, including at least 'top', 'bottom', 'shoes', also include 'outerwear' if it fits with the user's request.
+For case (c) [Style Inspiration], the final output should be a full outfit, including at least 'top', 'bottom', 'shoes'.
+For cases (a) [Exact Match] and (b) [Complete Outfit], you MUST adhere strictly to the exclusions defined above (do not generate unasked items).
 If the user requests multiple options with DIFFERENT price points (e.g. "one cheap, one expensive"), you MUST specify the 'budget' field INSIDE each specific outfit object in the 'outfits' list. This overrides the global 'max_budget' for that specific option.
 
 [TOTAL BUDGET LOGIC]
@@ -431,6 +493,8 @@ If the user asks to change, remove, or add items to the PREVIOUS OUTFIT, you mus
 * "remove", "delete", "drop", "take off"
 * "change", "replace", "swap", "switch", "instead of"
 * "add", "include", "wear", "put on"
+
+**EXCEPTION**: If the user asks for **MULTIPLE OPTIONS** or **VARIATIONS** (e.g. "show me 3 versions", "give me choices", "3 types of shoes"), you MUST use `refinement_type: 'NEW_OUTFIT'` and generate distinct full outfit objects. DO NOT use `REFINE_CURRENT`.
 
 The 'outfits' field should be left EMPTY [] when using REFINE_CURRENT, because the backend will reconstruct the outfit based on your modifications.
 
@@ -457,14 +521,18 @@ Types of Modifications:
 - Unless the user explicitly asks to remove everything else, DO NOT list unchanged items. The system automatically KEEPS any item from the previous outfit that is not referenced in a REMOVE or REPLACE action.
 - If the user asks for a completely NEW outfit or styles, use 'refinement_type': 'NEW_OUTFIT' and generate the full 'outfits' list as usual.
 - **Budget Preservation:** If refining (`REFINE_CURRENT`), the specific budget of the refined outfit will be preserved automatically unless explicitly changed.
-- **Budget Update:** If the user requests to CHANGE the budget, you MUST specify it in the `outfits` list as described below.
+- **Budget Update:** If the user requests to CHANGE the budget, you MUST specify it in the `outfits` list as described below. This is the ONLY way to update the budget for the current outfit.
 
 CRITICAL: When performing a refinement (`REFINE_CURRENT`), `outfits` should generally be EMPTY `[]` (defaults to 1 outfit).
-- **BUDGET CHANGE**: If the user requests a NEW BUDGET, include a SINGLE object with the new budget: `[{"budget": 500}]`.
-- **MULTIPLE OPTIONS**: If and ONLY IF the user explicitly asks for multiple options (e.g. "show me 3 versions"), include multiple dummy objects (e.g. `[{}, {}, {}]`).
+- **BUDGET CHANGE**: If the user requests a NEW BUDGET (e.g. "change budget to 500", "make it cheaper"), include a SINGLE object with the new budget: `[{"budget": 500}]`. THIS IS MANDATORY if budget is mentioned.
 - **DEFAULT**: If no budget change and no multiple options requested, keep `outfits` as `[]`. 
 
-DO NOT INCLUDE MORE THAN 1 ITEM FOR EACH 'category_schema' UNLESS STRICTLY NECESSARY.
+**STRICT CONSTRAINT:** You MUST NOT include more than 1 item per category (e.g. 1 pair of shoes, 1 trousers) within a SINGLE outfit object.
+- **VARIATIONS**: If the user asks for "3 options of shoes", you MUST generate 3 SEPARATE OUTFIT objects in the 'outfits' list, each containing 1 pair of shoes. DO NOT list 3 pairs of shoes in one outfit.
+- **EXCEPTIONS**: You may include multiple items ONLY for:
+  1. 'accessories' (e.g. hat + sunglasses)
+  2. 'top' (ONLY if layering, e.g. T-shirt + Jacket/Sweater)
+  3. 'swimwear' (bikini top + bottom)
 
 If constraints are missing, assume flexibility and generate a well-curated outfit that fits the occasion and budget. 
 
@@ -661,7 +729,7 @@ def generate_outfit_plan(
         # Prompt tecnico
         final_generation_prompt = gemini_history + [{
             "role": "user",
-            "parts": [{"text": "All constraints are now provided. Please generate the final, complete outfit plan immediately using the OutfitSchema."}]
+            "parts": [{"text": f"All constraints are now provided. Max Budget extracted: {dialogue_state.get('max_budget', 'Not Specified')}. Please generate the final, complete outfit plan immediately using the OutfitSchema."}]
         }]
 
         try:
