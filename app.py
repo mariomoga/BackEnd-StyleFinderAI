@@ -443,12 +443,13 @@ def get_conversations():
 @app.route('/api/chat', methods=['GET', 'POST'])
 @login_required
 def get_messages():
-    """Recupera tutte le conversazioni dell'utente autenticato.
+    """Recupera i messaggi di una conversazione specifica.
 
-    Non richiede parametri nel body (usa current_user).
+    Body JSON: {"conv_id": N}
     Risposte:
       - 401 se non autenticato
-      - 200 con {success: true, conversations: [...]}
+      - 400 se manca conv_id
+      - 200 con [ {message1}, {message2}, ... ]
     """
     try:
         data = request.get_json() or {}
